@@ -204,8 +204,12 @@ public class EditPostSettingsFragment extends Fragment
         if (post != null) {
             mExcerptEditText.setText(post.getPostExcerpt());
 
-            String[] items = new String[]{getResources().getString(R.string.publish_post), getResources().getString(R.string.draft),
-                    getResources().getString(R.string.pending_review), getResources().getString(R.string.post_private)};
+            String[] items = new String[]{
+                    getResources().getString(R.string.post_private),
+                    getResources().getString(R.string.publish_post),
+                    getResources().getString(R.string.draft),
+                    getResources().getString(R.string.pending_review)
+            };
 
             ArrayAdapter<String> adapter = new ArrayAdapter<String>(getActivity(), android.R.layout.simple_spinner_item, items);
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -221,10 +225,10 @@ public class EditPostSettingsFragment extends Fragment
 
             if (post.isUploaded()) {
                 items = new String[]{
+                        getResources().getString(R.string.post_private),
                         getResources().getString(R.string.publish_post),
                         getResources().getString(R.string.draft),
-                        getResources().getString(R.string.pending_review),
-                        getResources().getString(R.string.post_private)
+                        getResources().getString(R.string.pending_review)
                 };
                 adapter = new ArrayAdapter<String>(getActivity(), android.R.layout.simple_spinner_item, items);
                 mStatusSpinner.setAdapter(adapter);
@@ -250,18 +254,18 @@ public class EditPostSettingsFragment extends Fragment
                 mPasswordEditText.setText(post.getPassword());
 
             switch (post.getStatusEnum()) {
+                case PRIVATE:
+                    mStatusSpinner.setSelection(0, true);
+                    break;
                 case PUBLISHED:
                 case SCHEDULED:
                 case UNKNOWN:
-                    mStatusSpinner.setSelection(0, true);
-                    break;
-                case DRAFT:
                     mStatusSpinner.setSelection(1, true);
                     break;
-                case PENDING:
+                case DRAFT:
                     mStatusSpinner.setSelection(2, true);
                     break;
-                case PRIVATE:
+                case PENDING:
                     mStatusSpinner.setSelection(3, true);
                     break;
             }
@@ -289,13 +293,13 @@ public class EditPostSettingsFragment extends Fragment
     private String getPostStatusForSpinnerPosition(int position) {
         switch (position) {
             case 0:
-                return PostStatus.toString(PostStatus.PUBLISHED);
-            case 1:
-                return PostStatus.toString(PostStatus.DRAFT);
-            case 2:
-                return PostStatus.toString(PostStatus.PENDING);
-            case 3:
                 return PostStatus.toString(PostStatus.PRIVATE);
+            case 1:
+                return PostStatus.toString(PostStatus.PUBLISHED);
+            case 2:
+                return PostStatus.toString(PostStatus.DRAFT);
+            case 3:
+                return PostStatus.toString(PostStatus.PENDING);
             default:
                 return PostStatus.toString(PostStatus.UNKNOWN);
         }

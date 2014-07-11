@@ -16,7 +16,7 @@ import org.wordpress.android.util.AppLog;
  * WebView descendant used by ReaderPostDetailFragment - handles
  * displaying fullscreen video and detecting url/image clicks
  */
-class ReaderWebView extends WebView {
+public class ReaderWebView extends WebView {
 
     public interface ReaderWebViewUrlClickListener {
         public boolean onUrlClick(String url);
