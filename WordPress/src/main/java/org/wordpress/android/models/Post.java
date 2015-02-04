@@ -32,7 +32,7 @@ public class Post implements Serializable {
     private String keywords;
     private String moreText;
     private String permaLink;
-    private String status;
+    private String status = "private";
     private String remotePostId;
     private String title;
     private String userId;
