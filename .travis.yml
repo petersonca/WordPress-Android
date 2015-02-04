@@ -1,0 +1,28 @@
+language: android
+jdk: oraclejdk7
+
+notifications:
+  # Slack notification on failure (secured token).
+  slack:
+    rooms:
+      secure: sOTcwi1DT0lJykB/smJQwJ5lQblg9jc5PtLsTu4euI/P4nCv1CPu5DVZ1aDwXL6TPDUO5uEwbzbjVFZzrl2nFdAV9XvGT3wL3Zrm2Y5HBtwi8JWdbc4dYR/xobJlIg7HRczXwoFt6yls4BUayNJJbZFV9q0ftmUSe77Pag/ZWQw=
+    on_failure: always
+    on_success: change
+
+android:
+  components:
+    - build-tools-21.1.1
+    - android-19
+
+env:
+  global:
+    - GRADLE_OPTS="-XX:MaxPermSize=4g -Xmx4g"
+    - ANDROID_SDKS=android-14
+    - ANDROID_TARGET=android-14
+
+install:
+  # Setup gradle.properties
+  - cp WordPress/gradle.properties-example WordPress/gradle.properties
+
+script:
+  - ./gradlew -PdisablePreDex build

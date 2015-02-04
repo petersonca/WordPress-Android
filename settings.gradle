@@ -1,0 +1,6 @@
+include ':WordPress'
+include ':libs:utils:WordPressUtils'
+include ':libs:networking:WordPressNetworking'
+include ':libs:wpcomrest:WordPressComRest'
+include ':libs:graphview:WordPressGraphView'
+include ':libs:persistentedittext:PersistentEditText'
