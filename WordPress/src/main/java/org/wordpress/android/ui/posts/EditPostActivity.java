@@ -114,7 +114,9 @@ import org.wordpress.passcodelock.AppLockManager;
 import org.xmlrpc.android.ApiHelper;
 
 import java.io.File;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -1139,6 +1141,12 @@ public class EditPostActivity extends AppCompatActivity implements EditorFragmen
             }
             if (!TextUtils.isEmpty(post.getTitle())) {
                 mEditorFragment.setTitle(post.getTitle());
+            }
+            else {
+                Calendar c = Calendar.getInstance();
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd (EEE)");
+                String defaultTitle = dateFormat.format(c.getTime());
+                mEditorFragment.setTitle(defaultTitle);
             }
             // TODO: postSettingsButton.setText(post.isPage() ? R.string.page_settings : R.string.post_settings);
             mEditorFragment.setLocalDraft(post.isLocalDraft());
