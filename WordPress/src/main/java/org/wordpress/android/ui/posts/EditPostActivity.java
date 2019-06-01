@@ -2432,6 +2432,11 @@ public class EditPostActivity extends AppCompatActivity implements
             } else if (mEditorFragment instanceof GutenbergEditorFragment) {
                 // don't avoid calling setTitle() for GutenbergEditorFragment so RN gets initialized
                 mEditorFragment.setTitle("");
+            } else {
+                Calendar c = Calendar.getInstance();
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd (EEE)");
+                String defaultTitle = dateFormat.format(c.getTime());
+                mEditorFragment.setTitle(defaultTitle);
             }
 
             // TODO: postSettingsButton.setText(post.isPage() ? R.string.page_settings : R.string.post_settings);
