@@ -1,0 +1,24 @@
+diff --git a/WordPress/src/main/java/org/wordpress/android/ui/posts/EditPostActivity.java b/WordPress/src/main/java/org/wordpress/android/ui/posts/EditPostActivity.java
+index cb0477c..9e3ce0b 100644
+--- a/WordPress/src/main/java/org/wordpress/android/ui/posts/EditPostActivity.java
++++ b/WordPress/src/main/java/org/wordpress/android/ui/posts/EditPostActivity.java
+@@ -175,6 +175,7 @@ import org.wordpress.aztec.util.AztecLog;
+ import java.io.File;
+ import java.io.FileOutputStream;
+ import java.io.IOException;
++import java.text.SimpleDateFormat;
+ import java.util.ArrayList;
+ import java.util.Calendar;
+ import java.util.Collections;
+@@ -2432,6 +2433,11 @@ public class EditPostActivity extends AppCompatActivity implements
+             } else if (mEditorFragment instanceof GutenbergEditorFragment) {
+                 // don't avoid calling setTitle() for GutenbergEditorFragment so RN gets initialized
+                 mEditorFragment.setTitle("");
++            } else {
++                Calendar c = Calendar.getInstance();
++                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd (EEE)");
++                String defaultTitle = dateFormat.format(c.getTime());
++                mEditorFragment.setTitle(defaultTitle);
+             }
+ 
+             // TODO: postSettingsButton.setText(post.isPage() ? R.string.page_settings : R.string.post_settings);
