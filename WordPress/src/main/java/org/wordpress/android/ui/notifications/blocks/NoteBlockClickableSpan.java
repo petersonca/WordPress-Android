@@ -1,18 +1,19 @@
 package org.wordpress.android.ui.notifications.blocks;
 
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.support.annotation.NonNull;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.ClickableSpan;
 import android.view.View;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-import org.wordpress.android.ui.notifications.NotificationsConstants;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.R;
+import org.wordpress.android.fluxc.tools.FormattableRange;
+import org.wordpress.android.fluxc.tools.FormattableRangeType;
 
-import javax.annotation.Nonnull;
+import java.util.List;
 
 /**
  * A clickable span that includes extra ids/urls
@@ -22,71 +23,96 @@ public class NoteBlockClickableSpan extends ClickableSpan {
     private long mId;
     private long mSiteId;
     private long mPostId;
-    private NoteBlockRangeType mRangeType;
+    private FormattableRangeType mRangeType;
+    private FormattableRange mFormattableRange;
     private String mUrl;
-    private int[] mIndices;
+    private List<Integer> mIndices;
     private boolean mPressed;
     private boolean mShouldLink;
+    private boolean mIsFooter;
 
-    private int mTextColor = NotificationsConstants.COLOR_CALYPSO_DARK_BLUE;
+    private int mTextColor;
+    private int mBackgroundColor;
+    private int mLinkColor;
+    private int mLightTextColor;
 
-    private final JSONObject mBlockData;
 
-    public NoteBlockClickableSpan(JSONObject idData, boolean shouldLink) {
-        mBlockData = idData;
+    public NoteBlockClickableSpan(Context context, FormattableRange range, boolean shouldLink, boolean isFooter) {
         mShouldLink = shouldLink;
-        processRangeData();
+        mIsFooter = isFooter;
+
+        // Text/background colors
+        mTextColor = context.getResources().getColor(R.color.neutral_700);
+        mBackgroundColor = context.getResources().getColor(R.color.primary_50);
+        mLinkColor = context.getResources().getColor(R.color.primary_400);
+        mLightTextColor = context.getResources().getColor(R.color.neutral_700);
+
+        processRangeData(range);
     }
 
 
-    private void processRangeData() {
-        if (mBlockData != null) {
-            mId = JSONUtil.queryJSON(mBlockData, "id", 0);
-            mSiteId = JSONUtil.queryJSON(mBlockData, "site_id", 0);
-            mPostId = JSONUtil.queryJSON(mBlockData, "post_id", 0);
-            mRangeType = NoteBlockRangeType.fromString(JSONUtil.queryJSON(mBlockData, "type", ""));
-            mUrl = JSONUtil.queryJSON(mBlockData, "url", "");
-            mIndices = new int[]{0,0};
-            JSONArray indicesArray = mBlockData.optJSONArray("indices");
-            if (indicesArray != null) {
-                mIndices[0] = indicesArray.optInt(0);
-                mIndices[1] = indicesArray.optInt(1);
-            }
+    private void processRangeData(FormattableRange range) {
+        if (range != null) {
+            mFormattableRange = range;
+            mId = range.getId() == null ? 0 : range.getId();
+            mSiteId = range.getSiteId() == null ? 0 : range.getSiteId();
+            mPostId = range.getPostId() == null ? 0 : range.getPostId();
+            mRangeType = range.rangeType();
+            mUrl = range.getUrl();
+            mIndices = range.getIndices();
 
-            // Don't link ranges that we don't know the type of, unless we have a URL
-            mShouldLink = mShouldLink && (mRangeType != NoteBlockRangeType.UNKNOWN || !TextUtils.isEmpty(mUrl));
+            mShouldLink = shouldLinkRangeType();
 
-            // Apply different coloring for blockquotes
-            if (getRangeType() == NoteBlockRangeType.BLOCKQUOTE) {
-                mShouldLink = false;
-                mTextColor = NotificationsConstants.COLOR_CALYPSO_BLUE;
+            // Apply grey color to some types
+            if (mIsFooter || getRangeType() == FormattableRangeType.BLOCKQUOTE
+                || getRangeType() == FormattableRangeType.POST) {
+                mTextColor = mLightTextColor;
             }
         }
     }
 
+    // Don't link certain range types, or unknown ones, unless we have a URL
+    private boolean shouldLinkRangeType() {
+        return mShouldLink
+               && mRangeType != FormattableRangeType.BLOCKQUOTE
+               && mRangeType != FormattableRangeType.MATCH
+               && (mRangeType != FormattableRangeType.UNKNOWN || !TextUtils.isEmpty(mUrl));
+    }
+
     @Override
-    public void updateDrawState(@Nonnull TextPaint textPaint) {
+    public void updateDrawState(@NonNull TextPaint textPaint) {
         // Set background color
-        textPaint.bgColor = mPressed && !isBlockquoteType() ? NotificationsConstants.COLOR_CALYPSO_BLUE_BORDER : Color.TRANSPARENT;
-        textPaint.setColor(mShouldLink ? NotificationsConstants.COLOR_NEW_KID_BLUE : mTextColor);
+        textPaint.bgColor = mShouldLink && mPressed && !isBlockquoteType()
+                ? mBackgroundColor : Color.TRANSPARENT;
+        textPaint.setColor(mShouldLink && !mIsFooter ? mLinkColor : mTextColor);
         // No underlines
-        textPaint.setUnderlineText(false);
+        textPaint.setUnderlineText(mIsFooter);
     }
 
     private boolean isBlockquoteType() {
-        return getRangeType() == NoteBlockRangeType.BLOCKQUOTE;
+        return getRangeType() == FormattableRangeType.BLOCKQUOTE;
     }
 
     // return the desired style for this id type
     public int getSpanStyle() {
+        if (mIsFooter) {
+            return Typeface.BOLD;
+        }
+
         switch (getRangeType()) {
             case USER:
+            case MATCH:
                 return Typeface.BOLD;
             case SITE:
             case POST:
             case COMMENT:
             case BLOCKQUOTE:
                 return Typeface.ITALIC;
+            case STAT:
+            case FOLLOW:
+            case NOTICON:
+            case LIKE:
+            case UNKNOWN:
             default:
                 return Typeface.NORMAL;
         }
@@ -97,11 +123,15 @@ public class NoteBlockClickableSpan extends ClickableSpan {
         // noop
     }
 
-    public NoteBlockRangeType getRangeType() {
+    public FormattableRangeType getRangeType() {
         return mRangeType;
     }
 
-    public int[] getIndices() {
+    public FormattableRange getFormattableRange() {
+        return mFormattableRange;
+    }
+
+    public List<Integer> getIndices() {
         return mIndices;
     }
 
@@ -125,7 +155,7 @@ public class NoteBlockClickableSpan extends ClickableSpan {
         return mUrl;
     }
 
-    public boolean shouldShowBlogPreview() {
-        return mRangeType == NoteBlockRangeType.USER || mRangeType == NoteBlockRangeType.SITE;
+    public void setCustomType(String type) {
+        mRangeType = FormattableRangeType.Companion.fromString(type);
     }
 }

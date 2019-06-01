@@ -4,25 +4,25 @@ import android.text.TextUtils;
 
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.JSONUtils;
 import org.wordpress.android.util.UrlUtils;
 
 import java.io.Serializable;
 
 public class FollowerModel implements Serializable {
-    private String mBlogId;
+    private long mBlogId;
     private String mLabel;
     private String mAvatar;
     private String mUrl;
     private FollowDataModel mFollowData;
     private String mDateSubscribed;
 
-    public FollowerModel(String mBlogId, JSONObject followerJSONData) throws JSONException{
+    public FollowerModel(long mBlogId, JSONObject followerJSONData) throws JSONException {
         this.mBlogId = mBlogId;
         this.mLabel = followerJSONData.getString("label");
 
-        setAvatar(JSONUtil.getString(followerJSONData, "avatar"));
-        setURL(JSONUtil.getString(followerJSONData, "url"));
+        setAvatar(JSONUtils.getString(followerJSONData, "avatar"));
+        setURL(JSONUtils.getString(followerJSONData, "url"));
 
         this.mDateSubscribed = followerJSONData.getString("date_subscribed");
 
@@ -32,11 +32,11 @@ public class FollowerModel implements Serializable {
         }
     }
 
-    public String getBlogId() {
+    public long getBlogId() {
         return mBlogId;
     }
 
-    public void setBlogId(String blogId) {
+    public void setBlogId(long blogId) {
         this.mBlogId = blogId;
     }
 
@@ -48,9 +48,9 @@ public class FollowerModel implements Serializable {
         return mUrl;
     }
 
-    public boolean setURL(String URL) {
-        if (!TextUtils.isEmpty(URL) && UrlUtils.isValidUrlAndHostNotNull(URL)) {
-            this.mUrl = URL;
+    private boolean setURL(String url) {
+        if (!TextUtils.isEmpty(url) && UrlUtils.isValidUrlAndHostNotNull(url)) {
+            this.mUrl = url;
             return true;
         }
         return false;
@@ -64,10 +64,7 @@ public class FollowerModel implements Serializable {
         return mAvatar;
     }
 
-
-
-
-    public void setAvatar(String icon) {
+    private void setAvatar(String icon) {
         this.mAvatar = icon;
     }
 

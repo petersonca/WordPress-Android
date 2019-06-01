@@ -1,24 +1,71 @@
 package org.wordpress.android.ui.stats;
 
 import android.content.Context;
+import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseExpandableListAdapter;
 
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
 import org.wordpress.android.ui.stats.models.ClickGroupModel;
 import org.wordpress.android.ui.stats.models.ClicksModel;
 import org.wordpress.android.ui.stats.models.SingleItemModel;
-import org.wordpress.android.ui.stats.service.StatsService;
+import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 import org.wordpress.android.util.FormatUtils;
-import org.wordpress.android.util.PhotonUtils;
-import org.wordpress.android.widgets.WPNetworkImageView;
 
 import java.util.List;
 
 public class StatsClicksFragment extends StatsAbstractListFragment {
     public static final String TAG = StatsClicksFragment.class.getSimpleName();
+
+    private ClicksModel mClicks;
+
+    @Override
+    protected boolean hasDataAvailable() {
+        return mClicks != null;
+    }
+
+    @Override
+    protected void saveStatsData(Bundle outState) {
+        if (hasDataAvailable()) {
+            outState.putSerializable(ARG_REST_RESPONSE, mClicks);
+        }
+    }
+
+    @Override
+    protected void restoreStatsData(Bundle savedInstanceState) {
+        if (savedInstanceState.containsKey(ARG_REST_RESPONSE)) {
+            mClicks = (ClicksModel) savedInstanceState.getSerializable(ARG_REST_RESPONSE);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.ClicksUpdated event) {
+        if (!shouldUpdateFragmentOnUpdateEvent(event)) {
+            return;
+        }
+
+        mGroupIdToExpandedMap.clear();
+        mClicks = event.mClicks;
+
+        updateUI();
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.SectionUpdateError event) {
+        if (!shouldUpdateFragmentOnErrorEvent(event)) {
+            return;
+        }
+
+        mClicks = null;
+        mGroupIdToExpandedMap.clear();
+        showErrorUI(event.mError);
+    }
 
     @Override
     protected void updateUI() {
@@ -26,25 +73,25 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
             return;
         }
 
-        if (isErrorResponse()) {
-            showErrorUI();
-            return;
-        }
-
-        if (!isDataEmpty() && ((ClicksModel) mDatamodels[0]).getClickGroups().size() > 0) {
-            BaseExpandableListAdapter adapter = new MyExpandableListAdapter(getActivity(), ((ClicksModel) mDatamodels[0]).getClickGroups());
-            StatsUIHelper.reloadGroupViews(getActivity(), adapter, mGroupIdToExpandedMap, mList, getMaxNumberOfItemsToShowInList());
+        if (hasClicks()) {
+            BaseExpandableListAdapter adapter = new MyExpandableListAdapter(getActivity(), mClicks.getClickGroups());
+            StatsUIHelper.reloadGroupViews(getActivity(), adapter, mGroupIdToExpandedMap, mList,
+                                           getMaxNumberOfItemsToShowInList());
             showHideNoResultsUI(false);
         } else {
             showHideNoResultsUI(true);
         }
     }
 
+    private boolean hasClicks() {
+        return mClicks != null
+               && mClicks.getClickGroups() != null
+               && mClicks.getClickGroups().size() > 0;
+    }
+
     @Override
     protected boolean isViewAllOptionAvailable() {
-        return (!isDataEmpty(0)
-                && ((ClicksModel) mDatamodels[0]).getClickGroups() != null
-                && ((ClicksModel) mDatamodels[0]).getClickGroups().size() > MAX_NUM_OF_ITEMS_DISPLAYED_IN_LIST);
+        return (hasClicks() && mClicks.getClickGroups().size() > MAX_NUM_OF_ITEMS_DISPLAYED_IN_LIST);
     }
 
     @Override
@@ -53,9 +100,9 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
     }
 
     @Override
-    protected StatsService.StatsEndpointsEnum[] getSectionsToUpdate() {
-        return new StatsService.StatsEndpointsEnum[]{
-                StatsService.StatsEndpointsEnum.CLICKS
+    protected StatsServiceLogic.StatsEndpointsEnum[] sectionsToUpdate() {
+        return new StatsServiceLogic.StatsEndpointsEnum[]{
+                StatsServiceLogic.StatsEndpointsEnum.CLICKS
         };
     }
 
@@ -63,31 +110,34 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
     protected int getEntryLabelResId() {
         return R.string.stats_entry_clicks_link;
     }
+
     @Override
     protected int getTotalsLabelResId() {
         return R.string.stats_totals_clicks;
     }
+
     @Override
     protected int getEmptyLabelTitleResId() {
         return R.string.stats_empty_clicks_title;
     }
+
     @Override
     protected int getEmptyLabelDescResId() {
         return R.string.stats_empty_clicks_desc;
     }
 
     private class MyExpandableListAdapter extends BaseExpandableListAdapter {
-        public LayoutInflater inflater;
-        private List<ClickGroupModel> clickGroups;
+        public final LayoutInflater inflater;
+        private final List<ClickGroupModel> mClickGroups;
 
-        public MyExpandableListAdapter(Context context, List<ClickGroupModel> clickGroups) {
-            this.clickGroups = clickGroups;
+        MyExpandableListAdapter(Context context, List<ClickGroupModel> clickGroups) {
+            mClickGroups = clickGroups;
             this.inflater = LayoutInflater.from(context);
         }
 
         @Override
         public Object getChild(int groupPosition, int childPosition) {
-            ClickGroupModel currentGroup = clickGroups.get(groupPosition);
+            ClickGroupModel currentGroup = mClickGroups.get(groupPosition);
             List<SingleItemModel> results = currentGroup.getClicks();
             return results.get(childPosition);
         }
@@ -100,7 +150,6 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
         @Override
         public View getChildView(int groupPosition, final int childPosition,
                                  boolean isLastChild, View convertView, ViewGroup parent) {
-
             final SingleItemModel children = (SingleItemModel) getChild(groupPosition, childPosition);
 
             if (convertView == null) {
@@ -121,7 +170,14 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
             // totals
             holder.totalsTextView.setText(FormatUtils.formatDecimal(
                     children.getTotals()
-            ));
+                                                                   ));
+            holder.totalsTextView.setContentDescription(
+                    org.wordpress.android.util.StringUtils.getQuantityString(
+                            holder.totalsTextView.getContext(),
+                            R.string.stats_clicks_zero_desc,
+                            R.string.stats_clicks_one_desc,
+                            R.string.stats_clicks_many_desc,
+                            children.getTotals()));
 
             // no icon
             holder.networkImageView.setVisibility(View.GONE);
@@ -131,7 +187,7 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
 
         @Override
         public int getChildrenCount(int groupPosition) {
-            ClickGroupModel currentGroup = clickGroups.get(groupPosition);
+            ClickGroupModel currentGroup = mClickGroups.get(groupPosition);
             List<SingleItemModel> clicks = currentGroup.getClicks();
             if (clicks == null) {
                 return 0;
@@ -142,12 +198,12 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
 
         @Override
         public Object getGroup(int groupPosition) {
-            return clickGroups.get(groupPosition);
+            return mClickGroups.get(groupPosition);
         }
 
         @Override
         public int getGroupCount() {
-            return clickGroups.size();
+            return mClickGroups.size();
         }
 
 
@@ -159,13 +215,14 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
         @Override
         public View getGroupView(int groupPosition, boolean isExpanded,
                                  View convertView, ViewGroup parent) {
-
+            final StatsViewHolder holder;
             if (convertView == null) {
                 convertView = inflater.inflate(R.layout.stats_list_cell, parent, false);
-                convertView.setTag(new StatsViewHolder(convertView));
+                holder = new StatsViewHolder(convertView);
+                convertView.setTag(holder);
+            } else {
+                holder = (StatsViewHolder) convertView.getTag();
             }
-
-            final StatsViewHolder holder = (StatsViewHolder) convertView.getTag();
 
             ClickGroupModel group = (ClickGroupModel) getGroup(groupPosition);
 
@@ -176,16 +233,23 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
             int children = getChildrenCount(groupPosition);
 
             if (children > 0) {
-                holder.setEntryText(name, getResources().getColor(R.color.stats_link_text_color));
+                holder.setEntryText(name, getResources().getColor(R.color.link_stats));
             } else {
                 holder.setEntryTextOrLink(url, name);
             }
 
             // totals
             holder.totalsTextView.setText(FormatUtils.formatDecimal(total));
+            holder.totalsTextView.setContentDescription(
+                    org.wordpress.android.util.StringUtils.getQuantityString(
+                            holder.totalsTextView.getContext(),
+                            R.string.stats_clicks_zero_desc,
+                            R.string.stats_clicks_one_desc,
+                            R.string.stats_clicks_many_desc,
+                            total));
 
-            holder.networkImageView.setImageUrl(PhotonUtils.fixAvatar(icon, mResourceVars.headerAvatarSizePx), WPNetworkImageView.ImageType.STATS_SITE_AVATAR);
-            holder.networkImageView.setVisibility(View.VISIBLE);
+            // Site icon
+            holder.networkImageView.setVisibility(View.GONE);
 
             if (children == 0) {
                 holder.showLinkIcon();
@@ -205,7 +269,6 @@ public class StatsClicksFragment extends StatsAbstractListFragment {
         public boolean isChildSelectable(int groupPosition, int childPosition) {
             return false;
         }
-
     }
 
     @Override

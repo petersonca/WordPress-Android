@@ -97,7 +97,8 @@ public class RestClientCustomizableMock extends RestClient {
         // URL example: https://public-api.wordpress.com/rest/v1/me
         // Filename: default-public-api-wordpress-com-rest-v1-me.json
         String filename = mPrefix + "-" + url.replace("https://", "").replace("/", "-").replace(".", "-").replace("?",
-                "-") + ".json";
+                                                                                                                  "-")
+                          + ".json";
 
         if ("password-invalid".equals(mPrefix) && errorListener != null) {
             errorListener.onErrorResponse(forgeVolleyErrorFromFilename(filename));
@@ -119,16 +120,17 @@ public class RestClientCustomizableMock extends RestClient {
             return dummyReturnValue;
         }
 
+        String data = fileToString(filename);
+        if (data == null) {
+            AppLog.e(T.TESTS, "Can't read file: " + filename);
+            throw new RuntimeException("Can't read file: " + filename);
+        }
+
         try {
-            String data = fileToString(filename);
-            if (data == null) {
-                AppLog.e(T.TESTS, "can't read file: " + filename);
-                return dummyReturnValue;
-            }
             JSONObject jsonObj = new JSONObject(data);
             listener.onResponse(jsonObj);
         } catch (JSONException je) {
-            AppLog.e(T.TESTS, "can't read file: " + filename + " - " + je.toString());
+            AppLog.e(T.TESTS, je.toString());
         }
         return dummyReturnValue;
     }

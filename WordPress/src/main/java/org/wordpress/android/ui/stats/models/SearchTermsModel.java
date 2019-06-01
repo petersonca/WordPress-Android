@@ -5,20 +5,19 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.util.AppLog;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 
-public class SearchTermsModel implements Serializable {
+public class SearchTermsModel extends BaseStatsModel {
     private String mPeriod;
     private String mDate;
-    private String mBlogID;
+    private long mBlogID;
     private List<SearchTermModel> mSearchTerms;
     private int mEncryptedSearchTerms, mOtherSearchTerms, mTotalSearchTerms;
 
-    public SearchTermsModel(String blogID, JSONObject response) throws JSONException {
+    public SearchTermsModel(long blogID, JSONObject response) throws JSONException {
         this.mBlogID = blogID;
         this.mPeriod = response.getString("period");
         this.mDate = response.getString("date");
@@ -32,7 +31,8 @@ public class SearchTermsModel implements Serializable {
         Iterator<String> keys = jDaysObject.keys();
         if (keys.hasNext()) {
             String key = keys.next();
-            JSONObject jDateObject = jDaysObject.optJSONObject(key); // This could be an empty array on site with low traffic
+            JSONObject jDateObject =
+                    jDaysObject.optJSONObject(key); // This could be an empty array on site with low traffic
             searchTermsArray = null;
             if (jDateObject != null) {
                 searchTermsArray = jDateObject.getJSONArray("search_terms");
@@ -47,7 +47,7 @@ public class SearchTermsModel implements Serializable {
         }
 
         ArrayList<SearchTermModel> list = new ArrayList<>(searchTermsArray.length());
-        for (int i=0; i < searchTermsArray.length(); i++) {
+        for (int i = 0; i < searchTermsArray.length(); i++) {
             try {
                 JSONObject postObject = searchTermsArray.getJSONObject(i);
                 String term = postObject.getString("term");
@@ -55,19 +55,19 @@ public class SearchTermsModel implements Serializable {
                 SearchTermModel currentModel = new SearchTermModel(blogID, mDate, term, total, false);
                 list.add(currentModel);
             } catch (JSONException e) {
-                AppLog.e(AppLog.T.STATS, "Unexpected SearchTerm object in searchterms array" +
-                        "at position " + i + " Response: " + response.toString(), e);
+                AppLog.e(AppLog.T.STATS, "Unexpected SearchTerm object in searchterms array"
+                                         + "at position " + i + " Response: " + response.toString(), e);
             }
         }
 
         this.mSearchTerms = list;
     }
 
-    public String getBlogID() {
+    public long getBlogID() {
         return mBlogID;
     }
 
-    public void setBlogID(String blogID) {
+    public void setBlogID(long blogID) {
         this.mBlogID = blogID;
     }
 

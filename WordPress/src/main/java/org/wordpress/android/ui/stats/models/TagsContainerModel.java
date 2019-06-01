@@ -4,21 +4,20 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class TagsContainerModel implements Serializable {
+public class TagsContainerModel extends BaseStatsModel {
     private String mDate;
-    private String mBlogID;
+    private long mBlogID;
     private List<TagsModel> mTags;
 
-    public TagsContainerModel(String blogID, JSONObject response) throws JSONException {
+    public TagsContainerModel(long blogID, JSONObject response) throws JSONException {
         this.mBlogID = blogID;
         this.mDate = response.getString("date");
         JSONArray outerTags = response.getJSONArray("tags");
         if (outerTags != null) {
-             mTags = new ArrayList<>(outerTags.length());
+            mTags = new ArrayList<>(outerTags.length());
             for (int i = 0; i < outerTags.length(); i++) {
                 JSONObject current = outerTags.getJSONObject(i);
                 mTags.add(new TagsModel(current));
@@ -30,11 +29,11 @@ public class TagsContainerModel implements Serializable {
         return mTags;
     }
 
-    public String getBlogId() {
+    public long getBlogId() {
         return mBlogID;
     }
 
-    public void setBlogId(String blogId) {
+    public void setBlogId(long blogId) {
         this.mBlogID = blogId;
     }
 

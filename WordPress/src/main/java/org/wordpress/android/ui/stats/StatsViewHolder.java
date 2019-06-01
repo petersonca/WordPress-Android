@@ -1,9 +1,6 @@
 package org.wordpress.android.ui.stats;
 
 import android.content.Context;
-import android.content.Intent;
-import android.content.SharedPreferences;
-import android.preference.PreferenceManager;
 import android.text.TextUtils;
 import android.view.MenuItem;
 import android.view.View;
@@ -12,14 +9,13 @@ import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 
+import org.apache.commons.text.StringEscapeUtils;
 import org.wordpress.android.R;
-import org.wordpress.android.WordPress;
-import org.wordpress.android.WordPressDB;
+import org.wordpress.android.ui.ActivityLauncher;
 import org.wordpress.android.ui.WPWebViewActivity;
-import org.wordpress.android.ui.stats.models.PostModel;
+import org.wordpress.android.ui.stats.models.StatsPostModel;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.UrlUtils;
-import org.wordpress.android.widgets.WPNetworkImageView;
 
 /**
  * View holder for stats_list_cell layout
@@ -27,21 +23,22 @@ import org.wordpress.android.widgets.WPNetworkImageView;
 public class StatsViewHolder {
     public final TextView entryTextView;
     public final TextView totalsTextView;
-    public final WPNetworkImageView networkImageView;
+    public final ImageView networkImageView;
+    public final TextView alternativeImage;
     public final ImageView chevronImageView;
     public final ImageView linkImageView;
     public final ImageView imgMore;
     public final LinearLayout rowContent;
 
     public StatsViewHolder(View view) {
-        rowContent = (LinearLayout) view.findViewById(R.id.layout_content);
-        entryTextView = (TextView) view.findViewById(R.id.stats_list_cell_entry);
-        totalsTextView = (TextView) view.findViewById(R.id.stats_list_cell_total);
-        chevronImageView = (ImageView) view.findViewById(R.id.stats_list_cell_chevron);
-        linkImageView = (ImageView) view.findViewById(R.id.stats_list_cell_link);
-        networkImageView = (WPNetworkImageView) view.findViewById(R.id.stats_list_cell_image);
-
-        imgMore = (ImageView) view.findViewById(R.id.image_more);
+        rowContent = view.findViewById(R.id.layout_content);
+        entryTextView = view.findViewById(R.id.stats_list_cell_entry);
+        totalsTextView = view.findViewById(R.id.stats_list_cell_total);
+        chevronImageView = view.findViewById(R.id.stats_list_cell_chevron);
+        linkImageView = view.findViewById(R.id.stats_list_cell_link);
+        networkImageView = view.findViewById(R.id.stats_list_cell_image);
+        alternativeImage = view.findViewById(R.id.stats_list_cell_image_alt);
+        imgMore = view.findViewById(R.id.image_more);
     }
 
     /*
@@ -54,7 +51,7 @@ public class StatsViewHolder {
 
         entryTextView.setText(linkName);
         if (TextUtils.isEmpty(linkURL)) {
-            entryTextView.setTextColor(entryTextView.getContext().getResources().getColor(R.color.stats_text_color));
+            entryTextView.setTextColor(entryTextView.getContext().getResources().getColor(R.color.text));
             rowContent.setClickable(false);
             return;
         }
@@ -66,7 +63,7 @@ public class StatsViewHolder {
                         String url = linkURL;
                         AppLog.d(AppLog.T.UTILS, "Tapped on the Link: " + url);
                         if (url.startsWith("https://wordpress.com/my-stats")
-                                || url.startsWith("http://wordpress.com/my-stats")) {
+                            || url.startsWith("http://wordpress.com/my-stats")) {
                             // make sure to load the no-chrome version of Stats over https
                             url = UrlUtils.makeHttps(url);
                             if (url.contains("?")) {
@@ -79,29 +76,16 @@ public class StatsViewHolder {
                             }
                             AppLog.d(AppLog.T.UTILS, "Opening the Authenticated in-app browser : " + url);
                             // Let's try the global wpcom credentials
-                            SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(view.getContext());
-                            String statsAuthenticatedUser = settings.getString(WordPress.WPCOM_USERNAME_PREFERENCE, null);
-                            String statsAuthenticatedPassword = WordPressDB.decryptPassword(
-                                    settings.getString(WordPress.WPCOM_PASSWORD_PREFERENCE, null)
-                            );
-                            if (org.apache.commons.lang.StringUtils.isEmpty(statsAuthenticatedPassword)
-                                    || org.apache.commons.lang.StringUtils.isEmpty(statsAuthenticatedUser)) {
-                                // Still empty. Do not eat the event, but let's open the default Web Browser.
-
-                            }
-                            WPWebViewActivity.openUrlByUsingWPCOMCredentials(view.getContext(),
-                                    url, statsAuthenticatedUser, statsAuthenticatedPassword);
-
+                            WPWebViewActivity.openUrlByUsingGlobalWPCOMCredentials(view.getContext(), url);
                         } else if (url.startsWith("https") || url.startsWith("http")) {
                             AppLog.d(AppLog.T.UTILS, "Opening the in-app browser: " + url);
                             WPWebViewActivity.openURL(view.getContext(), url);
                         }
-
                     }
                 }
         );
 
-        entryTextView.setTextColor(entryTextView.getContext().getResources().getColor(R.color.stats_link_text_color));
+        entryTextView.setTextColor(entryTextView.getContext().getResources().getColor(R.color.link_stats));
     }
 
     public void setEntryText(String text) {
@@ -118,23 +102,21 @@ public class StatsViewHolder {
     /*
      * Used by stats fragments to set the entry text, opening the stats details page.
      */
-    public void setEntryTextOpenDetailsPage(final PostModel currentItem) {
+    public void setEntryTextOpenDetailsPage(final StatsPostModel currentItem) {
         if (entryTextView == null) {
             return;
         }
 
-        String name = currentItem.getTitle();
+        String name = StringEscapeUtils.unescapeHtml4(currentItem.getTitle());
         entryTextView.setText(name);
         rowContent.setOnClickListener(
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
-                        Intent statsPostViewIntent = new Intent(view.getContext(), StatsSinglePostDetailsActivity.class);
-                        statsPostViewIntent.putExtra(StatsSinglePostDetailsActivity.ARG_REMOTE_POST_OBJECT, currentItem);
-                        view.getContext().startActivity(statsPostViewIntent);
+                        ActivityLauncher.viewStatsSinglePostDetails(view.getContext(), currentItem);
                     }
                 });
-        entryTextView.setTextColor(entryTextView.getContext().getResources().getColor(R.color.stats_link_text_color));
+        entryTextView.setTextColor(entryTextView.getContext().getResources().getColor(R.color.link_stats));
     }
 
     /*
@@ -142,7 +124,7 @@ public class StatsViewHolder {
      * Opening it with reader if possible.
      *
      */
-    public void setMoreButtonOpenInReader(final PostModel currentItem) {
+    public void setMoreButtonOpenInReader(final StatsPostModel currentItem) {
         if (imgMore == null) {
             return;
         }

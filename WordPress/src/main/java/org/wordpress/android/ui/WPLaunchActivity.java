@@ -1,45 +1,47 @@
 package org.wordpress.android.ui;
 
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.AppCompatActivity;
 
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
-import org.wordpress.android.ui.posts.PostsActivity;
-import org.wordpress.android.ui.prefs.AppPrefs;
-import org.wordpress.android.util.AppLog;
-import org.wordpress.android.util.AppLog.T;
+import org.wordpress.android.ui.main.WPMainActivity;
+import org.wordpress.android.util.LocaleManager;
+import org.wordpress.android.util.ProfilingUtils;
 import org.wordpress.android.util.ToastUtils;
-import org.wordpress.android.util.WPActivityUtils;
 
-public class WPLaunchActivity extends ActionBarActivity {
-
+public class WPLaunchActivity extends AppCompatActivity {
     /*
      * this the main (default) activity, which does nothing more than launch the
-     * previously active activity on startup
+     * previously active activity on startup - note that it's defined in the
+     * manifest to have no UI
      */
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_launch);
+        ProfilingUtils.split("WPLaunchActivity.onCreate");
+        launchWPMainActivity();
+    }
 
+    private void launchWPMainActivity() {
         if (WordPress.wpDB == null) {
             ToastUtils.showToast(this, R.string.fatal_db_error, ToastUtils.Duration.LONG);
             finish();
             return;
         }
 
-        String lastActivityStr = AppPrefs.getLastActivityStr();
-        ActivityId id = ActivityId.getActivityIdFromName(lastActivityStr);
-        Intent intent = WPActivityUtils.getIntentForActivityId(this, id);
-        AppLog.v(T.UTILS, "WPLaunchActivity,  activityName: " + lastActivityStr + ", activityId: " + id + ", " +
-                "intent: " + intent);
-        if (intent == null) {
-            AppLog.v(T.UTILS, "Launch default Activity: PostsActivity");
-            intent = new Intent(this, PostsActivity.class);
-        }
+        Intent intent = new Intent(this, WPMainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setAction(getIntent().getAction());
+        intent.setData(getIntent().getData());
         startActivity(intent);
         finish();
     }

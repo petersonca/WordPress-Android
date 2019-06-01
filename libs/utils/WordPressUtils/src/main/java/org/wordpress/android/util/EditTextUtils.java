@@ -1,9 +1,12 @@
 package org.wordpress.android.util;
 
+import android.app.Activity;
 import android.content.Context;
 import android.text.TextUtils;
+import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.TextView;
 
 /**
  * EditText utils
@@ -14,13 +17,10 @@ public class EditTextUtils {
     }
 
     /**
-     * returns text string from passed EditText
+     * returns non-null text string from passed TextView
      */
-    public static String getText(EditText edit) {
-        if (edit.getText() == null) {
-            return "";
-        }
-        return edit.getText().toString();
+    public static String getText(TextView textView) {
+        return (textView != null) ? textView.getText().toString() : "";
     }
 
     /**
@@ -42,7 +42,13 @@ public class EditTextUtils {
 
     /**
      * hide the soft keyboard for the passed EditText
+     *
+     * @deprecated Use {@link ActivityUtils#hideKeyboard(Activity)} or {@link ActivityUtils#hideKeyboardForced(View)}
+     * instead.
      */
+    // TODO: Replace instances with ActivityUtils#showKeyboard(Activity) or ActivityUtils#showKeyboardForced(View) to
+    // consolidate similar methods and favor library version.
+    @Deprecated
     public static void hideSoftInput(EditText edit) {
         if (edit == null) {
             return;
@@ -56,7 +62,12 @@ public class EditTextUtils {
 
     /**
      * show the soft keyboard for the passed EditText
+     *
+     * @deprecated Use {@link ActivityUtils#showKeyboard(View)} instead.
      */
+    // TODO: Replace instances with ActivityUtils#showKeyboard(View) to consolidate similar methods and favor library
+    // version.
+    @Deprecated
     public static void showSoftInput(EditText edit) {
         if (edit == null) {
             return;

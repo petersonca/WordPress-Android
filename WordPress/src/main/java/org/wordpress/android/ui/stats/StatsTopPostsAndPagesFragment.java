@@ -1,18 +1,68 @@
 package org.wordpress.android.ui.stats;
 
+import android.os.Bundle;
 import android.widget.ArrayAdapter;
 
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
 import org.wordpress.android.ui.stats.adapters.PostsAndPagesAdapter;
-import org.wordpress.android.ui.stats.models.PostModel;
+import org.wordpress.android.ui.stats.models.StatsPostModel;
 import org.wordpress.android.ui.stats.models.TopPostsAndPagesModel;
-import org.wordpress.android.ui.stats.service.StatsService;
+import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 
+import java.util.ArrayList;
 import java.util.List;
 
 
 public class StatsTopPostsAndPagesFragment extends StatsAbstractListFragment {
     public static final String TAG = StatsTopPostsAndPagesFragment.class.getSimpleName();
+
+    private TopPostsAndPagesModel mTopPostsAndPagesModel = null;
+
+    @Override
+    protected boolean hasDataAvailable() {
+        return mTopPostsAndPagesModel != null;
+    }
+
+    @Override
+    protected void saveStatsData(Bundle outState) {
+        if (hasDataAvailable()) {
+            outState.putSerializable(ARG_REST_RESPONSE, mTopPostsAndPagesModel);
+        }
+    }
+
+    @Override
+    protected void restoreStatsData(Bundle savedInstanceState) {
+        if (savedInstanceState.containsKey(ARG_REST_RESPONSE)) {
+            mTopPostsAndPagesModel = (TopPostsAndPagesModel) savedInstanceState.getSerializable(ARG_REST_RESPONSE);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.TopPostsUpdated event) {
+        if (!shouldUpdateFragmentOnUpdateEvent(event)) {
+            return;
+        }
+
+        mGroupIdToExpandedMap.clear();
+        mTopPostsAndPagesModel = event.mTopPostsAndPagesModel;
+
+        updateUI();
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.SectionUpdateError event) {
+        if (!shouldUpdateFragmentOnErrorEvent(event)) {
+            return;
+        }
+
+        mTopPostsAndPagesModel = null;
+        mGroupIdToExpandedMap.clear();
+        showErrorUI(event.mError);
+    }
 
     @Override
     protected void updateUI() {
@@ -20,14 +70,9 @@ public class StatsTopPostsAndPagesFragment extends StatsAbstractListFragment {
             return;
         }
 
-        if (isErrorResponse()) {
-            showErrorUI();
-            return;
-        }
-
         if (hasTopPostsAndPages()) {
-            List<PostModel> postViews = ((TopPostsAndPagesModel) mDatamodels[0]).getTopPostsAndPages();
-            ArrayAdapter adapter = new PostsAndPagesAdapter(getActivity(), getLocalTableBlogID(), postViews);
+            List<StatsPostModel> postViews = mTopPostsAndPagesModel.getTopPostsAndPages();
+            ArrayAdapter adapter = new PostsAndPagesAdapter(getActivity(), postViews, false);
             StatsUIHelper.reloadLinearLayout(getActivity(), adapter, mList, getMaxNumberOfItemsToShowInList());
             showHideNoResultsUI(false);
         } else {
@@ -36,14 +81,14 @@ public class StatsTopPostsAndPagesFragment extends StatsAbstractListFragment {
     }
 
     private boolean hasTopPostsAndPages() {
-        return !isDataEmpty() && ((TopPostsAndPagesModel) mDatamodels[0]).hasTopPostsAndPages();
+        return mTopPostsAndPagesModel != null && mTopPostsAndPagesModel.hasTopPostsAndPages();
     }
 
-    private List<PostModel> getTopPostsAndPages() {
+    private List<StatsPostModel> getTopPostsAndPages() {
         if (!hasTopPostsAndPages()) {
-            return null;
+            return new ArrayList<StatsPostModel>(0);
         }
-        return ((TopPostsAndPagesModel) mDatamodels[0]).getTopPostsAndPages();
+        return mTopPostsAndPagesModel.getTopPostsAndPages();
     }
 
     @Override
@@ -77,9 +122,9 @@ public class StatsTopPostsAndPagesFragment extends StatsAbstractListFragment {
     }
 
     @Override
-    protected StatsService.StatsEndpointsEnum[] getSectionsToUpdate() {
-        return new StatsService.StatsEndpointsEnum[]{
-                StatsService.StatsEndpointsEnum.TOP_POSTS
+    protected StatsServiceLogic.StatsEndpointsEnum[] sectionsToUpdate() {
+        return new StatsServiceLogic.StatsEndpointsEnum[]{
+                StatsServiceLogic.StatsEndpointsEnum.TOP_POSTS
         };
     }
 

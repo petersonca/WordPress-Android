@@ -4,7 +4,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.ui.stats.StatsUtils;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.JSONUtils;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -14,16 +14,17 @@ import java.util.List;
  * A model to represent a Author
  */
 public class AuthorModel implements Serializable {
-    private String mBlogId;
+    private long mBlogId;
     private long mDate;
     private String mGroupId;
     private String mName;
     private String mAvatar;
     private int mViews;
     private FollowDataModel mFollowData;
-    private List<PostModel> mPosts;
+    private List<StatsPostModel> mPosts;
 
-    public AuthorModel(String mBlogId, String date, String mGroupId, String mName, String mAvatar, int mViews, JSONObject followData) throws JSONException {
+    public AuthorModel(long mBlogId, String date, String mGroupId, String mName, String mAvatar, int mViews,
+                       JSONObject followData) throws JSONException {
         this.mBlogId = mBlogId;
         setDate(StatsUtils.toMs(date));
         this.mGroupId = mGroupId;
@@ -35,14 +36,14 @@ public class AuthorModel implements Serializable {
         }
     }
 
-    public AuthorModel(String blogId, String date, JSONObject authorJSON) throws JSONException {
+    public AuthorModel(long blogId, String date, JSONObject authorJSON) throws JSONException {
         setBlogId(blogId);
         setDate(StatsUtils.toMs(date));
 
         setGroupId(authorJSON.getString("name"));
         setName(authorJSON.getString("name"));
         setViews(authorJSON.getInt("views"));
-        setAvatar(JSONUtil.getString(authorJSON, "avatar"));
+        setAvatar(JSONUtils.getString(authorJSON, "avatar"));
 
         // Follow data could return a boolean false
         JSONObject followData = authorJSON.optJSONObject("follow_data");
@@ -58,24 +59,24 @@ public class AuthorModel implements Serializable {
             String title = currentPostJSON.getString("title");
             int views = currentPostJSON.getInt("views");
             String url = currentPostJSON.getString("url");
-            PostModel currentPost = new PostModel(mBlogId, mDate, postId, title, views, url, null, "post");
+            StatsPostModel currentPost = new StatsPostModel(mBlogId, mDate, postId, title, views, url);
             mPosts.add(currentPost);
         }
     }
 
-    public String getBlogId() {
+    public long getBlogId() {
         return mBlogId;
     }
 
-    public void setBlogId(String blogId) {
-        this.mBlogId = blogId;
+    public void setBlogId(long blogId) {
+        mBlogId = blogId;
     }
 
     public long getDate() {
         return mDate;
     }
 
-    public void setDate(long date) {
+    private void setDate(long date) {
         this.mDate = date;
     }
 
@@ -83,7 +84,7 @@ public class AuthorModel implements Serializable {
         return mGroupId;
     }
 
-    public void setGroupId(String groupId) {
+    private void setGroupId(String groupId) {
         this.mGroupId = groupId;
     }
 
@@ -91,7 +92,7 @@ public class AuthorModel implements Serializable {
         return mName;
     }
 
-    public void setName(String name) {
+    private void setName(String name) {
         this.mName = name;
     }
 
@@ -99,7 +100,7 @@ public class AuthorModel implements Serializable {
         return mViews;
     }
 
-    public void setViews(int total) {
+    private void setViews(int total) {
         this.mViews = total;
     }
 
@@ -111,9 +112,11 @@ public class AuthorModel implements Serializable {
         return mAvatar;
     }
 
-    public void setAvatar(String icon) {
+    private void setAvatar(String icon) {
         this.mAvatar = icon;
     }
 
-    public List<PostModel> getPosts() { return mPosts; }
+    public List<StatsPostModel> getPosts() {
+        return mPosts;
+    }
 }

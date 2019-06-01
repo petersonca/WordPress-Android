@@ -5,21 +5,20 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.util.AppLog;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
 
-public class ClicksModel implements Serializable {
+public class ClicksModel extends BaseStatsModel {
     private String mPeriod;
     private String mDate;
-    private String mBlogID;
+    private long mBlogID;
     private int mOtherClicks;
     private int mTotalClicks;
     private List<ClickGroupModel> mClickGroups;
 
-    public ClicksModel(String blogID, JSONObject response) throws JSONException {
+    public ClicksModel(long blogID, JSONObject response) throws JSONException {
         this.mBlogID = blogID;
         this.mPeriod = response.getString("period");
         this.mDate = response.getString("date");
@@ -46,19 +45,19 @@ public class ClicksModel implements Serializable {
                     ClickGroupModel currentGroupModel = new ClickGroupModel(blogID, mDate, currentGroupJSON);
                     mClickGroups.add(currentGroupModel);
                 } catch (JSONException e) {
-                    AppLog.e(AppLog.T.STATS, "Unexpected ClickGroupModel object " +
-                            "at position " + i + " Response: " + response.toString(), e);
+                    AppLog.e(AppLog.T.STATS, "Unexpected ClickGroupModel object "
+                                             + "at position " + i + " Response: " + response.toString(), e);
                 }
             }
         }
     }
 
-    public String getBlogID() {
+    public long getBlogID() {
         return mBlogID;
     }
 
-    public void setBlogID(String blogID) {
-        this.mBlogID = blogID;
+    public void setBlogID(long blogID) {
+        mBlogID = blogID;
     }
 
     public String getDate() {

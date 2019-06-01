@@ -2,7 +2,7 @@ package org.wordpress.android.models;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.JSONUtils;
 import org.wordpress.android.util.StringUtils;
 
 import java.util.ArrayList;
@@ -13,10 +13,10 @@ public class Suggestion {
 
     public long siteID;
 
-    private String userLogin;
-    private String displayName;
-    private String imageUrl;
-    private String taxonomy;
+    private String mUserLogin;
+    private String mDisplayName;
+    private String mImageUrl;
+    private String mTaxonomy;
 
     public Suggestion(long siteID,
                       String userLogin,
@@ -24,10 +24,10 @@ public class Suggestion {
                       String imageUrl,
                       String taxonomy) {
         this.siteID = siteID;
-        this.userLogin = userLogin;
-        this.displayName = displayName;
-        this.imageUrl = imageUrl;
-        this.taxonomy = taxonomy;
+        mUserLogin = userLogin;
+        mDisplayName = displayName;
+        mImageUrl = imageUrl;
+        mTaxonomy = taxonomy;
     }
 
     public static Suggestion fromJSON(JSONObject json, long siteID) {
@@ -35,9 +35,9 @@ public class Suggestion {
             return null;
         }
 
-        String userLogin = JSONUtil.getString(json, "user_login");
-        String displayName = JSONUtil.getString(json, "display_name");
-        String imageUrl = JSONUtil.getString(json, "image_URL");
+        String userLogin = JSONUtils.getString(json, "user_login");
+        String displayName = JSONUtils.getString(json, "display_name");
+        String imageUrl = JSONUtils.getString(json, "image_URL");
 
         // the api currently doesn't return a taxonomy field but we want to be ready for when it does
         return new Suggestion(siteID, userLogin, displayName, imageUrl, MENTION_TAXONOMY);
@@ -59,13 +59,18 @@ public class Suggestion {
     }
 
     public String getUserLogin() {
-        return StringUtils.notNullStr(userLogin);
+        return StringUtils.notNullStr(mUserLogin);
     }
+
     public String getDisplayName() {
-        return StringUtils.notNullStr(displayName);
+        return StringUtils.notNullStr(mDisplayName);
     }
+
     public String getImageUrl() {
-        return StringUtils.notNullStr(imageUrl);
+        return StringUtils.notNullStr(mImageUrl);
     }
-    public String getTaxonomy() { return StringUtils.notNullStr(taxonomy); }
+
+    public String getTaxonomy() {
+        return StringUtils.notNullStr(mTaxonomy);
+    }
 }

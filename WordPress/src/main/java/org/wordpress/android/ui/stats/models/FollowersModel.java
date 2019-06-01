@@ -5,13 +5,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.util.AppLog;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
 
-public class FollowersModel implements Serializable {
-    private String mBlogID;
+public class FollowersModel extends BaseStatsModel {
+    private long mBlogID;
     private int mPage;
     private int mPages;
     private int mTotal;
@@ -19,7 +18,7 @@ public class FollowersModel implements Serializable {
     private int mTotalWPCom;
     private List<FollowerModel> mSubscribers;
 
-    public FollowersModel(String blogID, JSONObject response) throws JSONException {
+    public FollowersModel(long blogID, JSONObject response) throws JSONException {
         this.mBlogID = blogID;
         this.mPage = response.getInt("page");
         this.mPages = response.getInt("pages");
@@ -36,18 +35,18 @@ public class FollowersModel implements Serializable {
                     FollowerModel currentFollower = new FollowerModel(mBlogID, currentAuthorJSON);
                     mSubscribers.add(currentFollower);
                 } catch (JSONException e) {
-                    AppLog.e(AppLog.T.STATS, "Unexpected Follower object " +
-                            "at position " + i + " Response: " + response.toString(), e);
+                    AppLog.e(AppLog.T.STATS, "Unexpected Follower object "
+                                             + "at position " + i + " Response: " + response.toString(), e);
                 }
             }
         }
     }
 
-    public String getBlogID() {
+    public long getBlogID() {
         return mBlogID;
     }
 
-    public void setBlogID(String blogID) {
+    public void setBlogID(long blogID) {
         this.mBlogID = blogID;
     }
 

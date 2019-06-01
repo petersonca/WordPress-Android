@@ -1,60 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
-
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <FrameLayout
-        android:id="@+id/frame_header"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:visibility="gone" />
-
-    <android.support.v4.widget.SwipeRefreshLayout
-        android:id="@+id/ptr_layout"
+    <org.wordpress.android.ui.FilteredRecyclerView
+        android:id="@+id/reader_recycler_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_below="@+id/frame_header">
-
-        <org.wordpress.android.ui.reader.views.ReaderRecyclerView
-            android:id="@+id/recycler_view"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scrollbars="vertical" />
-
-    </android.support.v4.widget.SwipeRefreshLayout>
+        app:wpSpinnerItemView="@layout/toolbar_main_spinner_item"
+        app:wpToolbarDisableScrollGestures="true"/>
 
     <include
-        android:id="@+id/empty_view"
-        layout="@layout/reader_empty_view" />
+        android:id="@+id/empty_custom_view"
+        layout="@layout/reader_empty_view"/>
 
     <LinearLayout
         android:id="@+id/layout_new_posts"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_centerHorizontal="true"
-        android:layout_marginTop="@dimen/margin_medium"
+        android:layout_marginTop="24dp"
         android:background="@drawable/reader_new_posts_bar_background"
         android:elevation="@dimen/message_bar_elevation"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="@dimen/margin_extra_large"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/margin_large"
+        android:paddingEnd="24dp"
+        android:paddingStart="24dp"
+        android:paddingTop="@dimen/margin_large"
         android:visibility="gone"
-        tools:visibility="visible">
-
-        <ImageView
-            android:layout_width="wrap_content"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_arrow_up_white_24dp" />
+        tools:visibility="visible" >
 
         <org.wordpress.android.widgets.WPTextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:paddingRight="@dimen/margin_medium"
             android:text="@string/reader_label_new_posts"
-            android:textColor="@color/grey_extra_light"
-            android:textSize="@dimen/text_sz_large" />
+            android:textColor="@color/neutral_0"
+            android:textSize="@dimen/text_sz_large"/>
+
+        <org.wordpress.android.widgets.WPTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/reader_label_new_posts_subtitle"
+            android:textColor="@color/neutral_0"
+            android:textSize="@dimen/text_sz_small"/>
     </LinearLayout>
 
     <ProgressBar
@@ -63,8 +55,8 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
-        android:layout_marginLeft="@dimen/margin_large"
+        android:layout_centerHorizontal="true"
         android:visibility="gone"
-        tools:visibility="visible" />
+        tools:visibility="visible"/>
 
 </RelativeLayout>

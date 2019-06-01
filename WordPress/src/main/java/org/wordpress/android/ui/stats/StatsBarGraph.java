@@ -1,13 +1,20 @@
 package org.wordpress.android.ui.stats;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Rect;
 import android.graphics.Shader;
+import android.os.Bundle;
 import android.support.v4.view.GestureDetectorCompat;
+import android.support.v4.view.ViewCompat;
+import android.support.v4.view.accessibility.AccessibilityNodeInfoCompat;
+import android.support.v4.widget.ExploreByTouchHelper;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
+import android.view.View;
 
 import com.jjoe64.graphview.CustomLabelFormatter;
 import com.jjoe64.graphview.GraphView;
@@ -17,9 +24,10 @@ import com.jjoe64.graphview.GraphViewStyle;
 import com.jjoe64.graphview.IndexDependentColor;
 
 import org.wordpress.android.R;
-import org.wordpress.android.widgets.TypefaceCache;
+import org.wordpress.android.util.AppLog;
 
 import java.text.NumberFormat;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -28,14 +36,21 @@ import java.util.List;
  * Based on BarGraph from the GraphView library.
  */
 class StatsBarGraph extends GraphView {
-    // Keep tracks of every bar drawn on the graph.
-    private List<List<BarChartRect>> mSeriesRectsDrawedOnScreen = (List<List<BarChartRect>>) new LinkedList();
-    private int mBarPositionToHighlight = -1;
+    private static final int DEFAULT_MAX_Y = 10;
 
-    private GestureDetectorCompat mDetector;
+    // Keep tracks of every bar drawn on the graph.
+    private final List<List<BarChartRect>> mSeriesRectsDrawedOnScreen = (List<List<BarChartRect>>) new LinkedList();
+    private int mBarPositionToHighlight = -1;
+    private boolean[] mWeekendDays;
+
+    private final StatsBarGraphAccessibilityHelper mStatsBarGraphAccessibilityHelper;
+    private final List<BarChartRect> mVirtualBars = new ArrayList<>();
+    private String[] mAccessibleVirtualLabels;
+
+    private final GestureDetectorCompat mDetector;
     private OnGestureListener mGestureListener;
 
-    public StatsBarGraph(Context context) {
+    StatsBarGraph(Context context) {
         super(context, "");
 
         int width = LayoutParams.MATCH_PARENT;
@@ -44,11 +59,26 @@ class StatsBarGraph extends GraphView {
 
         setProperties();
 
-        // Use Open Sans
-        paint.setTypeface(TypefaceCache.getTypeface(getContext()));
-
         mDetector = new GestureDetectorCompat(getContext(), new MyGestureListener());
         mDetector.setIsLongpressEnabled(false);
+
+        if (isInEditMode()) {
+            // Special considerations for edit mode.
+            mStatsBarGraphAccessibilityHelper = null;
+        } else {
+            // Set up accessibility helper class.
+            mStatsBarGraphAccessibilityHelper = new StatsBarGraphAccessibilityHelper(this);
+            ViewCompat.setAccessibilityDelegate(this, mStatsBarGraphAccessibilityHelper);
+        }
+    }
+
+    @Override
+    public boolean dispatchHoverEvent(MotionEvent event) {
+        if (mStatsBarGraphAccessibilityHelper != null && mStatsBarGraphAccessibilityHelper.dispatchHoverEvent(event)) {
+            return true;
+        }
+
+        return super.dispatchHoverEvent(event);
     }
 
     public void setGestureListener(OnGestureListener listener) {
@@ -81,68 +111,67 @@ class StatsBarGraph extends GraphView {
         public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
             return false;
         }
+    }
 
-        private void highlightBarAndBroadcastDate() {
-            int tappedBar = getTappedBar();
-            //AppLog.d(AppLog.T.STATS, this.getClass().getName() + " Tapped bar " + tappedBar);
-            if (tappedBar >= 0) {
-                highlightBar(tappedBar);
-                if (mGestureListener != null) {
-                    mGestureListener.onBarTapped(tappedBar);
-                }
+    private void highlightBarAndBroadcastDate() {
+        highlightBarAndBroadcastDateAt(getTappedBar());
+    }
+
+    private void highlightBarAndBroadcastDateAt(int barIndex) {
+        if (barIndex >= 0) {
+            highlightBar(barIndex);
+            if (mGestureListener != null) {
+                mGestureListener.onBarTapped(barIndex);
+            }
+            if (mStatsBarGraphAccessibilityHelper != null) {
+                mStatsBarGraphAccessibilityHelper.invalidateVirtualView(barIndex);
             }
         }
     }
 
+    // accessibility is emplemented with StatsBarGraphAccessibilityHelper
+    @SuppressLint("ClickableViewAccessibility")
     @Override
-    public boolean onTouchEvent (MotionEvent event) {
-        this.mDetector.onTouchEvent(event);
+    public boolean onTouchEvent(MotionEvent event) {
+        if (mDetector != null) {
+            this.mDetector.onTouchEvent(event);
+        }
         return super.onTouchEvent(event);
     }
 
     private class HorizontalLabelsColor implements IndexDependentColor {
         public int get(int index) {
             if (mBarPositionToHighlight == index) {
-                return getResources().getColor(R.color.calypso_orange_dark);
+                return getResources().getColor(R.color.accent);
             } else {
-                return getResources().getColor(R.color.blue_dark);
-            }
-        }
-    }
-
-    private class HorizontalLabelsBackgroundColor implements IndexDependentColor {
-        public int get(int index) {
-            if (mBarPositionToHighlight == index) {
-                return getResources().getColor(R.color.calypso_orange_dark);
-            } else {
-                return Color.WHITE;
+                return getResources().getColor(R.color.neutral_600);
             }
         }
     }
 
     private void setProperties() {
-        GraphViewStyle gStyle =  getGraphViewStyle();
+        GraphViewStyle gStyle = getGraphViewStyle();
         gStyle.setHorizontalLabelsIndexDependentColor(new HorizontalLabelsColor());
-        gStyle.setHorizontalLabelsBackgroundIndexDependentColor(new HorizontalLabelsBackgroundColor());
-        gStyle.setHorizontalLabelsColor(getResources().getColor(R.color.blue_dark));
-        gStyle.setVerticalLabelsColor(getResources().getColor(R.color.stats_bar_graph_vertical_label));
+        gStyle.setHorizontalLabelsColor(getResources().getColor(R.color.neutral_600));
+        gStyle.setVerticalLabelsColor(getResources().getColor(R.color.neutral_400));
         gStyle.setTextSize(getResources().getDimensionPixelSize(R.dimen.text_sz_extra_small));
         gStyle.setGridXColor(Color.TRANSPARENT);
-        gStyle.setGridYColor(getResources().getColor(R.color.stats_bar_graph_grid));
+        gStyle.setGridYColor(getResources().getColor(R.color.neutral_0));
         gStyle.setNumVerticalLabels(3);
 
         setCustomLabelFormatter(new CustomLabelFormatter() {
-            private NumberFormat numberFormatter;
+            private NumberFormat mNumberFormatter;
+
             @Override
             public String formatLabel(double value, boolean isValueX) {
                 if (isValueX) {
                     return null;
                 }
-                if (numberFormatter == null) {
-                    numberFormatter = NumberFormat.getNumberInstance();
-                    numberFormatter.setMaximumFractionDigits(0);
+                if (mNumberFormatter == null) {
+                    mNumberFormatter = NumberFormat.getNumberInstance();
+                    mNumberFormatter.setMaximumFractionDigits(0);
                 }
-                return numberFormatter.format(value);
+                return mNumberFormatter.format(value);
             }
         });
     }
@@ -158,6 +187,10 @@ class StatsBarGraph extends GraphView {
                            double minY, double diffX, double diffY, float horstart,
                            GraphViewSeriesStyle style) {
         float colwidth = graphwidth / values.length;
+        int maxColumnSize = getGraphViewStyle().getMaxColumnWidth();
+        if (maxColumnSize > 0 && colwidth > maxColumnSize) {
+            colwidth = maxColumnSize;
+        }
 
         paint.setStrokeWidth(style.thickness);
         paint.setColor(style.color);
@@ -184,10 +217,21 @@ class StatsBarGraph extends GraphView {
             float bottom = graphheight + border - 1;
 
             // Draw the orange selection behind the selected bar
-            if (mBarPositionToHighlight == i) {
-                paint.setColor(getResources().getColor(R.color.calypso_orange_dark));
-                paint.setAlpha(50);
+            if (style.outerhighlightColor != 0x00ffffff && mBarPositionToHighlight == i) {
+                paint.setColor(style.outerhighlightColor);
                 canvas.drawRect(left, 10f, right, bottom, paint);
+            }
+
+            // Draw the grey background color on weekend days
+            if (style.outerColor != 0x00ffffff
+                && mBarPositionToHighlight != i
+                && mWeekendDays != null && mWeekendDays[i]) {
+                paint.setColor(style.outerColor);
+                canvas.drawRect(left, 10f, right, bottom, paint);
+            }
+
+            if (mVirtualBars.size() < values.length) {
+                mVirtualBars.add(new BarChartRect(left - pad, 10f, right + pad, bottom));
             }
 
             if ((top - bottom) == 1) {
@@ -195,7 +239,9 @@ class StatsBarGraph extends GraphView {
                 if (mBarPositionToHighlight != i) {
                     paint.setColor(style.color);
                     paint.setAlpha(25);
-                    Shader shader = new LinearGradient(left + pad, bottom - 50, left + pad, bottom, Color.WHITE, Color.BLACK, Shader.TileMode.CLAMP);
+                    Shader shader =
+                            new LinearGradient(left + pad, bottom - 50, left + pad, bottom, Color.WHITE, Color.BLACK,
+                                               Shader.TileMode.CLAMP);
                     paint.setShader(shader);
                     canvas.drawRect(left + pad, bottom - 50, right - pad, bottom, paint);
                     paint.setShader(null);
@@ -204,7 +250,7 @@ class StatsBarGraph extends GraphView {
                 // draw a real bar
                 paint.setAlpha(255);
                 if (mBarPositionToHighlight == i) {
-                    paint.setColor(getResources().getColor(R.color.calypso_orange_dark));
+                    paint.setColor(style.highlightColor);
                 } else {
                     paint.setColor(style.color);
                 }
@@ -216,15 +262,22 @@ class StatsBarGraph extends GraphView {
         mSeriesRectsDrawedOnScreen.add(barChartRects);
     }
 
-    public int getTappedBar() {
+    private int getTappedBar() {
         float[] lastBarChartTouchedPoint = this.getLastTouchedPointOnCanvasAndReset();
         if (lastBarChartTouchedPoint[0] == 0f && lastBarChartTouchedPoint[1] == 0f) {
+            return -1;
+        }
+        return getTappedBarAt(lastBarChartTouchedPoint[0], lastBarChartTouchedPoint[1]);
+    }
+
+    private int getTappedBarAt(float x, float y) {
+        if (x == 0f && y == 0f) {
             return -1;
         }
         for (List<BarChartRect> currentSerieChartRects : mSeriesRectsDrawedOnScreen) {
             int i = 0;
             for (BarChartRect barChartRect : currentSerieChartRects) {
-                if (barChartRect.isPointInside(lastBarChartTouchedPoint[0], lastBarChartTouchedPoint[1])) {
+                if (barChartRect.isPointInside(x, y)) {
                     return i;
                 }
                 i++;
@@ -232,38 +285,17 @@ class StatsBarGraph extends GraphView {
         }
         return -1;
     }
-/*
-    public float getMiddlePointOfTappedBar(int tappedBar) {
-        if (tappedBar == -1 || mSeriesRectsDrawedOnScreen == null || mSeriesRectsDrawedOnScreen.size() == 0) {
-            return -1;
-        }
-        BarChartRect rect = mSeriesRectsDrawedOnScreen.get(0).get(tappedBar);
 
-        return ((rect.mLeft + rect.mRight) / 2) + getCanvasLeft();
+    public void setWeekendDays(boolean[] days) {
+        mWeekendDays = days;
     }
 
-    public void highlightAndDismissBar(int barPosition) {
-        mBarPositionToHighlight = barPosition;
-        if (mBarPositionToHighlight == -1) {
-            return;
-        }
-        this.redrawAll();
-        final Handler handler = new Handler();
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                mBarPositionToHighlight = -1;
-                redrawAll();
-            }
-        }, 500);
-    }
-*/
     public void highlightBar(int barPosition) {
         mBarPositionToHighlight = barPosition;
         this.redrawAll();
     }
 
-    public int getHighlightBar() {
+    public int getHighlightedBar() {
         return mBarPositionToHighlight;
     }
 
@@ -276,18 +308,49 @@ class StatsBarGraph extends GraphView {
         return 0;
     }
 
+    public void setAccessibleHorizontalLabels(String[] virtualLabels) {
+        mAccessibleVirtualLabels = virtualLabels;
+    }
+
+    public String getAccessibleHorizontalLabelForBarAt(int index) {
+        if (mAccessibleVirtualLabels != null && index < mAccessibleVirtualLabels.length) {
+            return mAccessibleVirtualLabels[index];
+        }
+        AppLog.w(AppLog.T.STATS, "Missing StatsBarGraph accessible label at index " + index);
+        return "";
+    }
+
+    // Make sure the highest number is always even, so the halfway mark is correctly balanced in the middle of the graph
+    // Also make sure to display a default value when there is no activity in the period.
+    @Override
+    protected double getMaxY() {
+        double maxY = super.getMaxY();
+        if (maxY == 0) {
+            return DEFAULT_MAX_Y;
+        }
+
+        return maxY + (maxY % 2);
+    }
+
     /**
      * Private class that is used to hold the local (to the canvas) coordinate on the screen
      * of every single bar in the graph
      */
     private class BarChartRect {
-        float mLeft, mTop, mRight, mBottom;
+        final float mLeft;
+        final float mTop;
+        final float mRight;
+        final float mBottom;
 
         BarChartRect(float left, float top, float right, float bottom) {
             this.mLeft = left;
             this.mTop = top;
             this.mRight = right;
             this.mBottom = bottom;
+        }
+
+        private Rect toRect() {
+            return new Rect(Math.round(mLeft), Math.round(mTop), Math.round(mRight), Math.round(mBottom));
         }
 
         /**
@@ -298,11 +361,56 @@ class StatsBarGraph extends GraphView {
          */
         public boolean isPointInside(float x, float y) {
             return x >= this.mLeft
-                    && x <= this.mRight;
+                   && x <= this.mRight;
         }
     }
 
     interface OnGestureListener {
-        public void onBarTapped(int tappedBar);
+        void onBarTapped(int tappedBar);
+    }
+
+    private class StatsBarGraphAccessibilityHelper extends ExploreByTouchHelper {
+        StatsBarGraphAccessibilityHelper(View parentView) {
+            super(parentView);
+        }
+
+        @Override protected int getVirtualViewAt(float x, float y) {
+            final int index = getTappedBarAt(x, y);
+            if (index >= 0) {
+                return index;
+            }
+
+            return ExploreByTouchHelper.INVALID_ID;
+        }
+
+        @Override protected void getVisibleVirtualViews(List<Integer> virtualViewIds) {
+                final int count = mVirtualBars.size();
+                for (int index = 0; index < count; index++) {
+                    virtualViewIds.add(index);
+            }
+        }
+
+        @Override protected void onPopulateNodeForVirtualView(int virtualViewId, AccessibilityNodeInfoCompat node) {
+            node.setContentDescription(getAccessibleHorizontalLabelForBarAt(virtualViewId));
+
+            node.setSelected(getHighlightedBar() == virtualViewId);
+
+            node.setClickable(mGestureListener != null);
+            node.setFocusable(true);
+
+            node.addAction(AccessibilityNodeInfoCompat.ACTION_CLICK);
+            node.setBoundsInParent(mVirtualBars.get(virtualViewId).toRect());
+        }
+
+
+        @Override protected boolean onPerformActionForVirtualView(int virtualViewId, int action, Bundle arguments) {
+            switch (action) {
+                case AccessibilityNodeInfoCompat.ACTION_CLICK:
+                    highlightBarAndBroadcastDateAt(virtualViewId);
+                    return true;
+            }
+
+            return false;
+        }
     }
 }

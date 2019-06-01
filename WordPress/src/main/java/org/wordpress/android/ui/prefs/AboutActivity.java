@@ -1,61 +1,77 @@
 package org.wordpress.android.ui.prefs;
 
-import android.content.Intent;
-import android.net.Uri;
+import android.content.Context;
 import android.os.Bundle;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 
+import org.wordpress.android.Constants;
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
+import org.wordpress.android.ui.ActivityLauncher;
+import org.wordpress.android.util.LocaleManager;
+import org.wordpress.android.util.WPUrlUtils;
 import org.wordpress.android.widgets.WPTextView;
-import org.wordpress.passcodelock.AppLockManager;
 
 import java.util.Calendar;
 
-public class AboutActivity extends ActionBarActivity implements OnClickListener {
-    private static final String URL_TOS = "http://en.wordpress.com/tos";
-    private static final String URL_AUTOMATTIC = "http://automattic.com";
-    private static final String URL_PRIVACY_POLICY = "/privacy";
+public class AboutActivity extends AppCompatActivity implements OnClickListener {
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
 
     @Override
     public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
-        setContentView(R.layout.about);
+        setContentView(R.layout.about_activity);
+        Toolbar toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
 
-        WPTextView version = (WPTextView) findViewById(R.id.about_version);
-        version.setText(getString(R.string.version) + " " + WordPress.versionName);
+        getSupportActionBar().setHomeAsUpIndicator(R.drawable.ic_close_white_24dp);
+        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        getSupportActionBar().setDisplayShowHomeEnabled(true);
+        getSupportActionBar().setDisplayShowTitleEnabled(false);
+        getSupportActionBar().setElevation(0);
 
-        WPTextView tos = (WPTextView) findViewById(R.id.about_tos);
+        WPTextView version = findViewById(R.id.about_version);
+        version.setText(getString(R.string.version_with_name_param, WordPress.versionName));
+
+        WPTextView tos = findViewById(R.id.about_tos);
         tos.setOnClickListener(this);
 
-        WPTextView pp = (WPTextView) findViewById(R.id.about_privacy);
+        WPTextView pp = findViewById(R.id.about_privacy);
         pp.setOnClickListener(this);
 
-        WPTextView publisher = (WPTextView) findViewById(R.id.about_publisher);
-        publisher.setText(getString(R.string.publisher) + " " + getString(R.string.automattic_inc));
+        WPTextView publisher = findViewById(R.id.about_publisher);
+        publisher.setText(getString(R.string.publisher_with_company_param, getString(R.string.automattic_inc)));
 
-        WPTextView copyright = (WPTextView) findViewById(R.id.about_copyright);
-        copyright.setText("©" + Calendar.getInstance().get(Calendar.YEAR) + " " + getString(R.string.automattic_inc));
+        WPTextView copyright = findViewById(R.id.about_copyright);
+        copyright.setText(
+                getString(R.string.copyright_with_year_and_company_params, Calendar.getInstance().get(Calendar.YEAR),
+                        getString(R.string.automattic_inc)));
+
+        WPTextView about = findViewById(R.id.about_url);
+        about.setOnClickListener(this);
     }
 
     @Override
     public void onClick(View v) {
-        Uri uri;
+        String url;
         int id = v.getId();
         if (id == R.id.about_url) {
-            uri = Uri.parse(URL_AUTOMATTIC);
+            url = Constants.URL_AUTOMATTIC;
         } else if (id == R.id.about_tos) {
-            uri = Uri.parse(URL_TOS);
+            url = WPUrlUtils.buildTermsOfServiceUrl(this);
         } else if (id == R.id.about_privacy) {
-            uri = Uri.parse(URL_AUTOMATTIC + URL_PRIVACY_POLICY);
+            url = Constants.URL_PRIVACY_POLICY;
         } else {
             return;
         }
-        AppLockManager.getInstance().setExtendedTimeout();
-        startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        ActivityLauncher.openUrlExternal(this, url);
     }
 
 

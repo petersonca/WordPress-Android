@@ -1,5 +1,6 @@
 package org.wordpress.android.ui.notifications.blocks;
 
+import android.support.annotation.NonNull;
 import android.text.Layout;
 import android.text.Selection;
 import android.text.Spannable;
@@ -7,24 +8,21 @@ import android.text.method.LinkMovementMethod;
 import android.view.MotionEvent;
 import android.widget.TextView;
 
-import javax.annotation.Nonnull;
-
 /**
  * Allows links to be highlighted when tapped on note blocks.
  * See: http://stackoverflow.com/a/20905824/309558
  */
-class NoteBlockLinkMovementMethod extends LinkMovementMethod {
-
+public class NoteBlockLinkMovementMethod extends LinkMovementMethod {
     private NoteBlockClickableSpan mPressedSpan;
 
     @Override
-    public boolean onTouchEvent(@Nonnull TextView textView, @Nonnull Spannable spannable, @Nonnull MotionEvent event) {
+    public boolean onTouchEvent(@NonNull TextView textView, @NonNull Spannable spannable, @NonNull MotionEvent event) {
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
             mPressedSpan = getPressedSpan(textView, spannable, event);
             if (mPressedSpan != null) {
                 mPressedSpan.setPressed(true);
                 Selection.setSelection(spannable, spannable.getSpanStart(mPressedSpan),
-                        spannable.getSpanEnd(mPressedSpan));
+                                       spannable.getSpanEnd(mPressedSpan));
             }
         } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
             NoteBlockClickableSpan touchedSpan = getPressedSpan(textView, spannable, event);
@@ -45,7 +43,6 @@ class NoteBlockLinkMovementMethod extends LinkMovementMethod {
     }
 
     private NoteBlockClickableSpan getPressedSpan(TextView textView, Spannable spannable, MotionEvent event) {
-
         int x = (int) event.getX();
         int y = (int) event.getY();
 
@@ -67,5 +64,4 @@ class NoteBlockLinkMovementMethod extends LinkMovementMethod {
 
         return touchedSpan;
     }
-
 }

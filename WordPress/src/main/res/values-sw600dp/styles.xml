@@ -1,10 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:android="http://schemas.android.com/apk/res/android">
-    <style name="WordPress.BorderedBackground">
-        <item name="android:layout_marginLeft">@dimen/notifications_list_margin</item>
-        <item name="android:layout_marginRight">@dimen/notifications_list_margin</item>
-        <item name="android:background">@drawable/calypso_bordered_bg</item>
-        <item name="android:paddingLeft">1dp</item>
-        <item name="android:paddingRight">1dp</item>
+
+<resources
+    xmlns:android="http://schemas.android.com/apk/res/android" >
+
+    <style name="QuickStartList">
+        <item name="android:clipChildren">false</item>
+        <item name="android:clipToPadding">false</item>
+        <item name="android:layout_gravity">center_horizontal</item>
+        <item name="android:layout_width">@dimen/quick_start_card_width_maximum</item>
+        <item name="android:paddingBottom">@dimen/margin_extra_large</item>
+        <item name="android:paddingEnd">@dimen/quick_start_card_padding_horizontal</item>
+        <item name="android:paddingStart">@dimen/quick_start_card_padding_horizontal</item>
+        <item name="android:paddingTop">@dimen/margin_extra_large</item>
     </style>
+
+    <style name="QuickStartListCard" parent="CardView">
+    </style>
+
 </resources>

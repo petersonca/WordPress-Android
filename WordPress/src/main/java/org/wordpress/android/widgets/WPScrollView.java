@@ -1,5 +1,6 @@
 package org.wordpress.android.widgets;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
@@ -9,68 +10,50 @@ import android.widget.ScrollView;
  * ScrollView which reports when user has scrolled up or down, and when scrolling has completed
  */
 public class WPScrollView extends ScrollView {
-    private float mLastMotionY;
-    private int mInitialScrollCheckY;
-    private boolean mIsMoving;
-    private static final int SCROLL_CHECK_DELAY = 100;
+    public interface ScrollDirectionListener {
+        void onScrollUp(float distanceY);
 
-    public interface OnScrollDirectionListener {
-        public void onScrollUp();
-        public void onScrollDown();
-        public void onScrollCompleted();
+        void onScrollDown(float distanceY);
+
+        void onScrollCompleted();
     }
-    private OnScrollDirectionListener mOnScrollDirectionListener;
+
+    private ScrollDirectionListener mScrollDirectionListener;
+    private int mInitialScrollCheckY;
+    private static final int SCROLL_CHECK_DELAY = 250;
 
     public WPScrollView(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public WPScrollView(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        this(context, attrs, 0);
     }
 
     public WPScrollView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
     }
 
-    public void setOnScrollDirectionListener(OnScrollDirectionListener listener) {
-        mOnScrollDirectionListener = listener;
+    public void setScrollDirectionListener(ScrollDirectionListener listener) {
+        mScrollDirectionListener = listener;
     }
 
+    @SuppressLint("ClickableViewAccessibility") // we are not detecting tap events, so can ignore this one
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (mOnScrollDirectionListener != null) {
-            int action = event.getAction() & MotionEvent.ACTION_MASK;
-
-            switch (action) {
-                case MotionEvent.ACTION_MOVE :
-                    if (mIsMoving) {
-                        int yDiff = (int) (event.getY() - mLastMotionY);
-                        if (yDiff < 0) {
-                            mOnScrollDirectionListener.onScrollDown();
-                        } else if (yDiff > 0) {
-                            mOnScrollDirectionListener.onScrollUp();
-                        }
-                        mLastMotionY = event.getY();
-                    } else {
-                        mIsMoving = true;
-                        mLastMotionY = event.getY();
-                    }
-                    break;
-
-                case MotionEvent.ACTION_UP:
-                    if (mIsMoving) {
-                        mIsMoving = false;
-                        startScrollCheck();
-                    }
-                    break;
-
-                default :
-                    mIsMoving = false;
-                    break;
+        if (mScrollDirectionListener != null
+            && event.getActionMasked() == MotionEvent.ACTION_MOVE
+            && event.getHistorySize() > 0) {
+            float initialY = event.getHistoricalY(event.getHistorySize() - 1);
+            float distanceY = initialY - event.getY();
+            if (distanceY < 0) {
+                mScrollDirectionListener.onScrollUp(distanceY);
+                startScrollCheck();
+            } else if (distanceY > 0) {
+                mScrollDirectionListener.onScrollDown(distanceY);
+                startScrollCheck();
             }
         }
-
         return super.onTouchEvent(event);
     }
 
@@ -83,9 +66,7 @@ public class WPScrollView extends ScrollView {
         @Override
         public void run() {
             if (mInitialScrollCheckY == getScrollY()) {
-                if (mOnScrollDirectionListener != null) {
-                    mOnScrollDirectionListener.onScrollCompleted();
-                }
+                mScrollDirectionListener.onScrollCompleted();
             } else {
                 mInitialScrollCheckY = getScrollY();
                 postDelayed(mScrollTask, SCROLL_CHECK_DELAY);
@@ -96,6 +77,7 @@ public class WPScrollView extends ScrollView {
     public boolean canScrollUp() {
         return canScrollVertically(-1);
     }
+
     public boolean canScrollDown() {
         return canScrollVertically(1);
     }

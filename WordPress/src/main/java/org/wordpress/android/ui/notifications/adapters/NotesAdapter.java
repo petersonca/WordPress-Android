@@ -1,151 +1,132 @@
 package org.wordpress.android.ui.notifications.adapters;
 
 import android.content.Context;
-import android.database.Cursor;
+import android.os.AsyncTask;
+import android.support.v4.text.BidiFormatter;
+import android.support.v4.view.ViewCompat;
 import android.support.v7.widget.RecyclerView;
-import android.text.Html;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
+import android.widget.ImageView;
 import android.widget.TextView;
 
-import com.simperium.client.Bucket;
-import com.simperium.client.BucketObjectMissingException;
-import com.simperium.client.Query;
-
 import org.wordpress.android.R;
-import org.wordpress.android.models.CommentStatus;
+import org.wordpress.android.WordPress;
+import org.wordpress.android.datasets.NotificationsTable;
+import org.wordpress.android.fluxc.model.CommentStatus;
 import org.wordpress.android.models.Note;
-import org.wordpress.android.ui.notifications.NotificationsListFragment;
-import org.wordpress.android.util.PhotonUtils;
-import org.wordpress.android.util.SqlUtils;
-import org.wordpress.android.util.StringUtils;
+import org.wordpress.android.ui.comments.CommentUtils;
+import org.wordpress.android.ui.notifications.NotificationsListFragmentPage.OnNoteClickListener;
+import org.wordpress.android.ui.notifications.utils.NotificationsUtilsWrapper;
+import org.wordpress.android.util.GravatarUtils;
+import org.wordpress.android.util.RtlUtils;
+import org.wordpress.android.util.image.ImageManager;
+import org.wordpress.android.util.image.ImageType;
 import org.wordpress.android.widgets.NoticonTextView;
-import org.wordpress.android.widgets.WPNetworkImageView;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-public class NotesAdapter extends CursorRecyclerViewAdapter<NotesAdapter.NoteViewHolder> {
+import javax.inject.Inject;
 
+public class NotesAdapter extends RecyclerView.Adapter<NotesAdapter.NoteViewHolder> {
     private final int mAvatarSz;
-    private final Query mQuery;
-    private final Bucket<Note> mNotesBucket;
-    private final int mReadBackgroundResId;
-    private final int mUnreadBackgroundResId;
-    private final List<String> mHiddenNoteIds = new ArrayList<String>();
-    private final List<String> mModeratingNoteIds = new ArrayList<String>();
+    private final int mColorRead;
+    private final int mColorUnread;
+    private final int mTextIndentSize;
 
-    private Context mContext;
+    private final DataLoadedListener mDataLoadedListener;
+    private final OnLoadMoreListener mOnLoadMoreListener;
+    private final ArrayList<Note> mNotes = new ArrayList<>();
+    private final ArrayList<Note> mFilteredNotes = new ArrayList<>();
+    @Inject protected ImageManager mImageManager;
+    @Inject protected NotificationsUtilsWrapper mNotificationsUtilsWrapper;
 
-    static NotificationsListFragment.OnNoteClickListener mOnNoteClickListener;
+    public enum FILTERS {
+        FILTER_ALL,
+        FILTER_COMMENT,
+        FILTER_FOLLOW,
+        FILTER_LIKE,
+        FILTER_UNREAD;
 
-    public NotesAdapter(Context context, Bucket<Note> bucket) {
-        super(context, null);
-
-        setHasStableIds(true);
-
-        mContext = context;
-        mNotesBucket = bucket;
-        // build a query that sorts by timestamp descending
-        mQuery = bucket.query()
-                .include(
-                        Note.Schema.TIMESTAMP_INDEX,
-                        Note.Schema.SUBJECT_INDEX,
-                        Note.Schema.SNIPPET_INDEX,
-                        Note.Schema.UNREAD_INDEX,
-                        Note.Schema.ICON_URL_INDEX,
-                        Note.Schema.NOTICON_INDEX,
-                        Note.Schema.IS_UNAPPROVED_INDEX,
-                        Note.Schema.LOCAL_STATUS)
-                .order(Note.Schema.TIMESTAMP_INDEX, Query.SortType.DESCENDING);
-
-        mAvatarSz = (int) context.getResources().getDimension(R.dimen.avatar_sz_medium);
-        mReadBackgroundResId = R.drawable.list_bg_selector;
-        mUnreadBackgroundResId = R.drawable.list_unread_bg_selector;
-    }
-
-    public void closeCursor() {
-        Cursor cursor = getCursor();
-        if (cursor != null) {
-            cursor.close();
-        }
-    }
-
-    public Note getNote(int position) {
-        if (getCursor() == null) {
-            return null;
-        }
-
-        Bucket.ObjectCursor<Note> cursor = (Bucket.ObjectCursor<Note>)getCursor();
-
-        if (cursor.moveToPosition(position)) {
-            String noteId = cursor.getSimperiumKey();
-            try {
-                return mNotesBucket.get(noteId);
-            } catch (BucketObjectMissingException e) {
-                return null;
+        public String toString() {
+            switch (this) {
+                case FILTER_ALL:
+                    return "all";
+                case FILTER_COMMENT:
+                    return "comment";
+                case FILTER_FOLLOW:
+                    return "follow";
+                case FILTER_LIKE:
+                    return "like";
+                case FILTER_UNREAD:
+                    return "unread";
+                default:
+                    return "all";
             }
         }
-
-        return null;
     }
 
-    public void reloadNotes() {
-        changeCursor(mQuery.execute());
+    private FILTERS mCurrentFilter = FILTERS.FILTER_ALL;
+
+    public interface DataLoadedListener {
+        void onDataLoaded(int itemsCount);
     }
 
-    public void addHiddenNoteId(String noteId) {
-        mHiddenNoteIds.add(noteId);
-        notifyDataSetChanged();
+    public interface OnLoadMoreListener {
+        void onLoadMore(long timestamp);
     }
 
-    public void removeHiddenNoteId(String noteId) {
-        mHiddenNoteIds.remove(noteId);
-        notifyDataSetChanged();
+    private OnNoteClickListener mOnNoteClickListener;
+
+    public NotesAdapter(Context context, DataLoadedListener dataLoadedListener, OnLoadMoreListener onLoadMoreListener) {
+        super();
+        ((WordPress) context.getApplicationContext()).component().inject(this);
+        mDataLoadedListener = dataLoadedListener;
+        mOnLoadMoreListener = onLoadMoreListener;
+
+        // this is on purpose - we don't show more than a hundred or so notifications at a time so no need to set
+        // stable IDs. This helps prevent crashes in case a note comes with no ID (we've code checking for that
+        // elsewhere, but telling the RecyclerView.Adapter the notes have stable Ids and then failing to provide them
+        // will make things go south as in https://github.com/wordpress-mobile/WordPress-Android/issues/8741
+        setHasStableIds(false);
+
+        mAvatarSz = (int) context.getResources().getDimension(R.dimen.notifications_avatar_sz);
+        mColorRead = context.getResources().getColor(android.R.color.white);
+        mColorUnread = context.getResources().getColor(R.color.background_notification_unread);
+        mTextIndentSize = context.getResources().getDimensionPixelSize(R.dimen.notifications_text_indent_sz);
     }
 
-    public void addModeratingNoteId(String noteId) {
-        mModeratingNoteIds.add(noteId);
-        notifyDataSetChanged();
+    public void setFilter(FILTERS newFilter) {
+        mCurrentFilter = newFilter;
     }
 
-    public void removeModeratingNoteId(String noteId) {
-        mModeratingNoteIds.remove(noteId);
-        notifyDataSetChanged();
+    public FILTERS getCurrentFilter() {
+        return mCurrentFilter;
     }
 
-    private String getStringForColumnName(Cursor cursor, String columnName) {
-        if (columnName == null || cursor == null || cursor.getColumnIndex(columnName) == -1) {
-            return "";
+    public void addAll(List<Note> notes, boolean clearBeforeAdding) {
+        Collections.sort(notes, new Note.TimeStampComparator());
+        try {
+            if (clearBeforeAdding) {
+                mNotes.clear();
+            }
+            mNotes.addAll(notes);
+        } finally {
+            myNotifyDatasetChanged();
         }
-
-        return StringUtils.notNullStr(cursor.getString(cursor.getColumnIndex(columnName)));
     }
 
-    private int getIntForColumnName(Cursor cursor, String columnName) {
-        if (columnName == null || cursor == null || cursor.getColumnIndex(columnName) == -1) {
-            return -1;
+    private void myNotifyDatasetChanged() {
+        buildFilteredNotesList(mFilteredNotes, mNotes, mCurrentFilter);
+        notifyDataSetChanged();
+        if (mDataLoadedListener != null) {
+            mDataLoadedListener.onDataLoaded(getItemCount());
         }
-
-        return cursor.getInt(cursor.getColumnIndex(columnName));
-    }
-
-    private long getLongForColumnName(Cursor cursor, String columnName) {
-        if (columnName == null || cursor == null || cursor.getColumnIndex(columnName) == -1) {
-            return -1;
-        }
-
-        return cursor.getLong(cursor.getColumnIndex(columnName));
-    }
-
-    public int getCount() {
-        if (getCursor() != null) {
-            return getCursor().getCount();
-        }
-
-        return 0;
     }
 
     @Override
@@ -155,156 +136,244 @@ public class NotesAdapter extends CursorRecyclerViewAdapter<NotesAdapter.NoteVie
         return new NoteViewHolder(view);
     }
 
+    // Instead of building the filtered notes list dynamically, create it once and re-use it.
+    // Otherwise it's re-created so many times during layout.
+    public static void buildFilteredNotesList(ArrayList<Note> filteredNotes, ArrayList<Note> notes, FILTERS filter) {
+        filteredNotes.clear();
+        if (notes.isEmpty() || filter == FILTERS.FILTER_ALL) {
+            filteredNotes.addAll(notes);
+            return;
+        }
+        for (Note currentNote : notes) {
+            switch (filter) {
+                case FILTER_COMMENT:
+                    if (currentNote.isCommentType()) {
+                        filteredNotes.add(currentNote);
+                    }
+                    break;
+                case FILTER_FOLLOW:
+                    if (currentNote.isFollowType()) {
+                        filteredNotes.add(currentNote);
+                    }
+                    break;
+                case FILTER_UNREAD:
+                    if (currentNote.isUnread()) {
+                        filteredNotes.add(currentNote);
+                    }
+                    break;
+                case FILTER_LIKE:
+                    if (currentNote.isLikeType()) {
+                        filteredNotes.add(currentNote);
+                    }
+                    break;
+            }
+        }
+    }
+
+    private Note getNoteAtPosition(int position) {
+        if (isValidPosition(position)) {
+            return mFilteredNotes.get(position);
+        }
+
+        return null;
+    }
+
+    public void replaceNote(Note newNote) {
+        if (newNote != null) {
+            int position = getPositionForNoteUnfiltered(newNote.getId());
+            if (position != RecyclerView.NO_POSITION && position < mNotes.size()) {
+                mNotes.set(position, newNote);
+            }
+        }
+    }
+
+    private boolean isValidPosition(int position) {
+        return (position >= 0 && position < mFilteredNotes.size());
+    }
+
     @Override
-    public void onBindViewHolder(NoteViewHolder noteViewHolder, Cursor cursor) {
-        final Bucket.ObjectCursor<Note> objectCursor = (Bucket.ObjectCursor<Note>) cursor;
-        noteViewHolder.noteId = objectCursor.getSimperiumKey();
+    public int getItemCount() {
+        return mFilteredNotes.size();
+    }
+
+    @Override
+    public void onBindViewHolder(NoteViewHolder noteViewHolder, int position) {
+        final Note note = getNoteAtPosition(position);
+        if (note == null) {
+            return;
+        }
+        noteViewHolder.mContentView.setTag(note.getId());
 
         // Display group header
-        Note.NoteTimeGroup timeGroup = Note.getTimeGroupForTimestamp(getLongForColumnName(objectCursor, Note.Schema.TIMESTAMP_INDEX));
+        Note.NoteTimeGroup timeGroup = Note.getTimeGroupForTimestamp(note.getTimestamp());
 
         Note.NoteTimeGroup previousTimeGroup = null;
-        if (objectCursor.getPosition() > 0 && objectCursor.moveToPrevious()) {
-            previousTimeGroup = Note.getTimeGroupForTimestamp(getLongForColumnName(objectCursor, Note.Schema.TIMESTAMP_INDEX));
-            objectCursor.moveToNext();
+        if (position > 0) {
+            Note previousNote = getNoteAtPosition(position - 1);
+            previousTimeGroup = Note.getTimeGroupForTimestamp(previousNote.getTimestamp());
         }
 
         if (previousTimeGroup != null && previousTimeGroup == timeGroup) {
-            noteViewHolder.headerView.setVisibility(View.GONE);
+            noteViewHolder.mHeaderText.setVisibility(View.GONE);
         } else {
+            noteViewHolder.mHeaderText.setVisibility(View.VISIBLE);
+
             if (timeGroup == Note.NoteTimeGroup.GROUP_TODAY) {
-                noteViewHolder.headerText.setText(mContext.getString(R.string.stats_timeframe_today).toUpperCase());
+                noteViewHolder.mHeaderText.setText(R.string.stats_timeframe_today);
             } else if (timeGroup == Note.NoteTimeGroup.GROUP_YESTERDAY) {
-                noteViewHolder.headerText.setText(mContext.getString(R.string.stats_timeframe_yesterday).toUpperCase());
+                noteViewHolder.mHeaderText.setText(R.string.stats_timeframe_yesterday);
             } else if (timeGroup == Note.NoteTimeGroup.GROUP_OLDER_TWO_DAYS) {
-                noteViewHolder.headerText.setText(mContext.getString(R.string.older_two_days).toUpperCase());
+                noteViewHolder.mHeaderText.setText(R.string.older_two_days);
             } else if (timeGroup == Note.NoteTimeGroup.GROUP_OLDER_WEEK) {
-                noteViewHolder.headerText.setText(mContext.getString(R.string.older_last_week).toUpperCase());
+                noteViewHolder.mHeaderText.setText(R.string.older_last_week);
             } else {
-                noteViewHolder.headerText.setText(mContext.getString(R.string.older_month).toUpperCase());
+                noteViewHolder.mHeaderText.setText(R.string.older_month);
             }
-
-            noteViewHolder.headerView.setVisibility(View.VISIBLE);
         }
 
-        if (mHiddenNoteIds.size() > 0 && mHiddenNoteIds.contains(objectCursor.getSimperiumKey())) {
-            noteViewHolder.contentView.setVisibility(View.GONE);
-            noteViewHolder.headerView.setVisibility(View.GONE);
-        } else {
-            noteViewHolder.contentView.setVisibility(View.VISIBLE);
-        }
-
-        CommentStatus commentStatus = CommentStatus.UNKNOWN;
-        if (SqlUtils.sqlToBool(getIntForColumnName(objectCursor, Note.Schema.IS_UNAPPROVED_INDEX))) {
+        CommentStatus commentStatus = CommentStatus.ALL;
+        if (note.getCommentStatus() == CommentStatus.UNAPPROVED) {
             commentStatus = CommentStatus.UNAPPROVED;
         }
 
-        String localStatus = getStringForColumnName(objectCursor, Note.Schema.LOCAL_STATUS);
-        if (!TextUtils.isEmpty(localStatus)) {
-            commentStatus = CommentStatus.fromString(localStatus);
-        }
-
-        if (mModeratingNoteIds.size() > 0 && mModeratingNoteIds.contains(objectCursor.getSimperiumKey())) {
-            noteViewHolder.progressBar.setVisibility(View.VISIBLE);
-        } else {
-            noteViewHolder.progressBar.setVisibility(View.GONE);
+        if (!TextUtils.isEmpty(note.getLocalStatus())) {
+            commentStatus = CommentStatus.fromString(note.getLocalStatus());
         }
 
         // Subject is stored in db as html to preserve text formatting
-        String noteSubjectHtml = getStringForColumnName(objectCursor, Note.Schema.SUBJECT_INDEX).trim();
-        CharSequence noteSubjectSpanned = Html.fromHtml(noteSubjectHtml);
+        CharSequence noteSubjectSpanned = note.getFormattedSubject(mNotificationsUtilsWrapper);
         // Trim the '\n\n' added by Html.fromHtml()
         noteSubjectSpanned = noteSubjectSpanned.subSequence(0, TextUtils.getTrimmedLength(noteSubjectSpanned));
-        noteViewHolder.txtLabel.setText(noteSubjectSpanned);
+        noteViewHolder.mTxtSubject.setText(noteSubjectSpanned);
 
-        String noteSnippet = getStringForColumnName(objectCursor, Note.Schema.SNIPPET_INDEX);
-        if (!TextUtils.isEmpty(noteSnippet)) {
-            noteViewHolder.txtLabel.setMaxLines(2);
-            noteViewHolder.txtDetail.setText(noteSnippet);
-            noteViewHolder.txtDetail.setVisibility(View.VISIBLE);
+        String noteSubjectNoticon = note.getCommentSubjectNoticon();
+        if (!TextUtils.isEmpty(noteSubjectNoticon)) {
+            ViewParent parent = noteViewHolder.mTxtSubject.getParent();
+            // Fix position of the subject noticon in the RtL mode
+            if (parent instanceof ViewGroup) {
+                int textDirection = BidiFormatter.getInstance().isRtl(noteViewHolder.mTxtSubject.getText())
+                        ? ViewCompat.LAYOUT_DIRECTION_RTL : ViewCompat.LAYOUT_DIRECTION_LTR;
+                ViewCompat.setLayoutDirection((ViewGroup) parent, textDirection);
+            }
+            // mirror noticon in the rtl mode
+            if (RtlUtils.isRtl(noteViewHolder.itemView.getContext())) {
+                noteViewHolder.mTxtSubjectNoticon.setScaleX(-1);
+            }
+            CommentUtils.indentTextViewFirstLine(noteViewHolder.mTxtSubject, mTextIndentSize);
+            noteViewHolder.mTxtSubjectNoticon.setText(noteSubjectNoticon);
+            noteViewHolder.mTxtSubjectNoticon.setVisibility(View.VISIBLE);
         } else {
-            noteViewHolder.txtLabel.setMaxLines(3);
-            noteViewHolder.txtDetail.setVisibility(View.GONE);
+            noteViewHolder.mTxtSubjectNoticon.setVisibility(View.GONE);
         }
 
-        String avatarUrl = PhotonUtils.fixAvatar(getStringForColumnName(objectCursor, Note.Schema.ICON_URL_INDEX), mAvatarSz);
-        noteViewHolder.imgAvatar.setImageUrl(avatarUrl, WPNetworkImageView.ImageType.AVATAR);
-
-        boolean isUnread = SqlUtils.sqlToBool(getIntForColumnName(objectCursor, Note.Schema.UNREAD_INDEX));
-
-        String noticonCharacter = getStringForColumnName(objectCursor, Note.Schema.NOTICON_INDEX);
-        if (!TextUtils.isEmpty(noticonCharacter)) {
-            noteViewHolder.noteIcon.setText(noticonCharacter);
-            if (commentStatus == CommentStatus.UNAPPROVED) {
-                noteViewHolder.noteIcon.setBackgroundResource(R.drawable.shape_oval_orange);
-            } else if (isUnread) {
-                noteViewHolder.noteIcon.setBackgroundResource(R.drawable.shape_oval_blue_white_stroke);
-            } else {
-                noteViewHolder.noteIcon.setBackgroundResource(R.drawable.shape_oval_grey);
-            }
-            noteViewHolder.noteIcon.setVisibility(View.VISIBLE);
+        String noteSnippet = note.getCommentSubject();
+        if (!TextUtils.isEmpty(noteSnippet)) {
+            noteViewHolder.mTxtSubject.setMaxLines(2);
+            noteViewHolder.mTxtDetail.setText(noteSnippet);
+            noteViewHolder.mTxtDetail.setVisibility(View.VISIBLE);
         } else {
-            noteViewHolder.noteIcon.setVisibility(View.GONE);
+            noteViewHolder.mTxtSubject.setMaxLines(3);
+            noteViewHolder.mTxtDetail.setVisibility(View.GONE);
+        }
+
+        String avatarUrl = GravatarUtils.fixGravatarUrl(note.getIconURL(), mAvatarSz);
+        mImageManager.loadIntoCircle(noteViewHolder.mImgAvatar, ImageType.AVATAR_WITH_BACKGROUND, avatarUrl);
+
+        boolean isUnread = note.isUnread();
+
+        String noticonCharacter = note.getNoticonCharacter();
+        noteViewHolder.mNoteIcon.setText(noticonCharacter);
+        if (commentStatus == CommentStatus.UNAPPROVED) {
+            noteViewHolder.mNoteIcon.setBackgroundResource(R.drawable.bg_oval_warning_stroke_white);
+        } else if (isUnread) {
+            noteViewHolder.mNoteIcon.setBackgroundResource(R.drawable.bg_oval_primary_400_stroke_notification_unread);
+        } else {
+            noteViewHolder.mNoteIcon.setBackgroundResource(R.drawable.bg_oval_neutral_200_stroke_white);
         }
 
         if (isUnread) {
-            noteViewHolder.itemView.setBackgroundResource(mUnreadBackgroundResId);
+            noteViewHolder.itemView.setBackgroundColor(mColorUnread);
         } else {
-            noteViewHolder.itemView.setBackgroundResource(mReadBackgroundResId);
+            noteViewHolder.itemView.setBackgroundColor(mColorRead);
+        }
+
+        // request to load more comments when we near the end
+        if (mOnLoadMoreListener != null && position >= getItemCount() - 1) {
+            mOnLoadMoreListener.onLoadMore(note.getTimestamp());
         }
     }
 
     public int getPositionForNote(String noteId) {
-        Bucket.ObjectCursor<Note> cursor = (Bucket.ObjectCursor<Note>) getCursor();
-        if (cursor != null) {
-            for (int i = 0; i < cursor.getCount(); i++) {
-                cursor.moveToPosition(i);
-                String noteKey = cursor.getSimperiumKey();
+        return getPositionForNoteInArray(noteId, mFilteredNotes);
+    }
+
+    private int getPositionForNoteUnfiltered(String noteId) {
+        return getPositionForNoteInArray(noteId, mNotes);
+    }
+
+    private int getPositionForNoteInArray(String noteId, ArrayList<Note> notes) {
+        if (notes != null && noteId != null) {
+            for (int i = 0; i < notes.size(); i++) {
+                String noteKey = notes.get(i).getId();
                 if (noteKey != null && noteKey.equals(noteId)) {
                     return i;
                 }
             }
         }
-
         return RecyclerView.NO_POSITION;
     }
 
-    public void setOnNoteClickListener(NotificationsListFragment.OnNoteClickListener mNoteClickListener) {
+    public void setOnNoteClickListener(OnNoteClickListener mNoteClickListener) {
         mOnNoteClickListener = mNoteClickListener;
     }
 
-    public static class NoteViewHolder extends RecyclerView.ViewHolder {
-        private final View headerView;
-        private final View contentView;
-        private final TextView headerText;
+    public void reloadNotesFromDBAsync() {
+        new ReloadNotesFromDBTask().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
 
-        private final TextView txtLabel;
-        private final TextView txtDetail;
-        private final WPNetworkImageView imgAvatar;
-        private final NoticonTextView noteIcon;
-        private final View progressBar;
+    private class ReloadNotesFromDBTask extends AsyncTask<Void, Void, ArrayList<Note>> {
+        @Override
+        protected ArrayList<Note> doInBackground(Void... voids) {
+            return NotificationsTable.getLatestNotes();
+        }
 
-        private String noteId;
-
-        public NoteViewHolder(View view) {
-            super(view);
-            headerView = view.findViewById(R.id.time_header);
-            contentView = view.findViewById(R.id.note_content_container);
-            headerText = (TextView)view.findViewById(R.id.header_date_text);
-            txtLabel = (TextView) view.findViewById(R.id.note_subject);
-            txtDetail = (TextView) view.findViewById(R.id.note_detail);
-            imgAvatar = (WPNetworkImageView) view.findViewById(R.id.note_avatar);
-            noteIcon = (NoticonTextView) view.findViewById(R.id.note_icon);
-            progressBar = view.findViewById(R.id.moderate_progress);
-
-            itemView.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (mOnNoteClickListener != null && noteId != null) {
-                        mOnNoteClickListener.onClickNote(noteId);
-                    }
-                }
-            });
+        @Override
+        protected void onPostExecute(ArrayList<Note> notes) {
+            mNotes.clear();
+            mNotes.addAll(notes);
+            myNotifyDatasetChanged();
         }
     }
+
+    class NoteViewHolder extends RecyclerView.ViewHolder {
+        private final View mContentView;
+        private final TextView mHeaderText;
+        private final TextView mTxtSubject;
+        private final TextView mTxtSubjectNoticon;
+        private final TextView mTxtDetail;
+        private final ImageView mImgAvatar;
+        private final NoticonTextView mNoteIcon;
+
+        NoteViewHolder(View view) {
+            super(view);
+            mContentView = view.findViewById(R.id.note_content_container);
+            mHeaderText = view.findViewById(R.id.header_text);
+            mTxtSubject = view.findViewById(R.id.note_subject);
+            mTxtSubjectNoticon = view.findViewById(R.id.note_subject_noticon);
+            mTxtDetail = view.findViewById(R.id.note_detail);
+            mImgAvatar = view.findViewById(R.id.note_avatar);
+            mNoteIcon = view.findViewById(R.id.note_icon);
+
+            mContentView.setOnClickListener(mOnClickListener);
+        }
+    }
+
+    private final View.OnClickListener mOnClickListener = new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            if (mOnNoteClickListener != null && v.getTag() instanceof String) {
+                mOnNoteClickListener.onClickNote((String) v.getTag());
+            }
+        }
+    };
 }

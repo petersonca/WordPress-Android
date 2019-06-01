@@ -1,31 +1,76 @@
 package org.wordpress.android.ui.stats;
 
 import android.content.Context;
+import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
 import org.wordpress.android.ui.stats.models.SingleItemModel;
 import org.wordpress.android.ui.stats.models.VideoPlaysModel;
-import org.wordpress.android.ui.stats.service.StatsService;
+import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 import org.wordpress.android.util.FormatUtils;
+import org.wordpress.android.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 
 
 public class StatsVideoplaysFragment extends StatsAbstractListFragment {
     public static final String TAG = StatsVideoplaysFragment.class.getSimpleName();
 
+    private VideoPlaysModel mVideos;
+
     @Override
-    protected void updateUI() {
-        if (!isAdded()) {
+    protected boolean hasDataAvailable() {
+        return mVideos != null;
+    }
+
+    @Override
+    protected void saveStatsData(Bundle outState) {
+        if (hasDataAvailable()) {
+            outState.putSerializable(ARG_REST_RESPONSE, mVideos);
+        }
+    }
+
+    @Override
+    protected void restoreStatsData(Bundle savedInstanceState) {
+        if (savedInstanceState.containsKey(ARG_REST_RESPONSE)) {
+            mVideos = (VideoPlaysModel) savedInstanceState.getSerializable(ARG_REST_RESPONSE);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.VideoPlaysUpdated event) {
+        if (!shouldUpdateFragmentOnUpdateEvent(event)) {
             return;
         }
 
-        if (isErrorResponse()) {
-            showErrorUI();
+        mVideos = event.mVideos;
+        updateUI();
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.SectionUpdateError event) {
+        if (!shouldUpdateFragmentOnErrorEvent(event)) {
+            return;
+        }
+
+        mVideos = null;
+        showErrorUI(event.mError);
+    }
+
+
+    @Override
+    protected void updateUI() {
+        if (!isAdded()) {
             return;
         }
 
@@ -39,16 +84,16 @@ public class StatsVideoplaysFragment extends StatsAbstractListFragment {
     }
 
     private boolean hasVideoplays() {
-        return !isDataEmpty()
-                && ((VideoPlaysModel) mDatamodels[0]).getPlays() != null
-                && ((VideoPlaysModel) mDatamodels[0]).getPlays().size() > 0;
+        return mVideos != null
+               && mVideos.getPlays() != null
+               && mVideos.getPlays().size() > 0;
     }
 
     private List<SingleItemModel> getVideoplays() {
         if (!hasVideoplays()) {
-            return null;
+            return new ArrayList<SingleItemModel>(0);
         }
-        return ((VideoPlaysModel) mDatamodels[0]).getPlays();
+        return mVideos.getPlays();
     }
 
     @Override
@@ -62,28 +107,28 @@ public class StatsVideoplaysFragment extends StatsAbstractListFragment {
     }
 
     private class TopPostsAndPagesAdapter extends ArrayAdapter<SingleItemModel> {
+        private final List<SingleItemModel> mList;
+        private final LayoutInflater mInflater;
 
-        private final List<SingleItemModel> list;
-        private final LayoutInflater inflater;
-
-        public TopPostsAndPagesAdapter(Context context, List<SingleItemModel> list) {
+        TopPostsAndPagesAdapter(Context context, List<SingleItemModel> list) {
             super(context, R.layout.stats_list_cell, list);
-            this.list = list;
-            inflater = LayoutInflater.from(context);
+            mList = list;
+            mInflater = LayoutInflater.from(context);
         }
 
+        @NonNull
         @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
+        public View getView(int position, View convertView, @NonNull ViewGroup parent) {
             View rowView = convertView;
             // reuse views
             if (rowView == null) {
-                rowView = inflater.inflate(R.layout.stats_list_cell, parent, false);
+                rowView = mInflater.inflate(R.layout.stats_list_cell, parent, false);
                 // configure view holder
                 StatsViewHolder viewHolder = new StatsViewHolder(rowView);
                 rowView.setTag(viewHolder);
             }
 
-            final SingleItemModel currentRowData = list.get(position);
+            final SingleItemModel currentRowData = mList.get(position);
             StatsViewHolder holder = (StatsViewHolder) rowView.getTag();
             // fill data
             // entries
@@ -91,6 +136,13 @@ public class StatsVideoplaysFragment extends StatsAbstractListFragment {
 
             // totals
             holder.totalsTextView.setText(FormatUtils.formatDecimal(currentRowData.getTotals()));
+            holder.totalsTextView.setContentDescription(
+                    StringUtils.getQuantityString(
+                            holder.totalsTextView.getContext(),
+                            R.string.stats_plays_zero_desc,
+                            R.string.stats_plays_one_desc,
+                            R.string.stats_plays_many_desc,
+                            currentRowData.getTotals()));
 
             // no icon
             holder.networkImageView.setVisibility(View.GONE);
@@ -120,9 +172,9 @@ public class StatsVideoplaysFragment extends StatsAbstractListFragment {
     }
 
     @Override
-    protected StatsService.StatsEndpointsEnum[] getSectionsToUpdate() {
-        return new StatsService.StatsEndpointsEnum[]{
-                StatsService.StatsEndpointsEnum.VIDEO_PLAYS
+    protected StatsServiceLogic.StatsEndpointsEnum[] sectionsToUpdate() {
+        return new StatsServiceLogic.StatsEndpointsEnum[]{
+                StatsServiceLogic.StatsEndpointsEnum.VIDEO_PLAYS
         };
     }
 

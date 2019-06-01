@@ -28,6 +28,10 @@ public class ProfilingUtils {
         getInstance().dumpToLog();
     }
 
+    public static void stop() {
+        getInstance().reset(null);
+    }
+
     private static ProfilingUtils getInstance() {
         if (sInstance == null) {
             sInstance = new ProfilingUtils();
@@ -56,12 +60,18 @@ public class ProfilingUtils {
     }
 
     public void addSplit(String splitLabel) {
+        if (mLabel == null) {
+            return;
+        }
         long now = SystemClock.elapsedRealtime();
         mSplits.add(now);
         mSplitLabels.add(splitLabel);
     }
 
     public void dumpToLog() {
+        if (mLabel == null) {
+            return;
+        }
         AppLog.d(T.PROFILING, mLabel + ": begin");
         final long first = mSplits.get(0);
         long now = first;
@@ -69,7 +79,7 @@ public class ProfilingUtils {
             now = mSplits.get(i);
             final String splitLabel = mSplitLabels.get(i);
             final long prev = mSplits.get(i - 1);
-            AppLog.d(T.PROFILING, mLabel + ":      " + (now - prev) + " ms, " + splitLabel);
+            AppLog.d(T.PROFILING, mLabel + ": " + (now - prev) + " ms, " + splitLabel);
         }
         AppLog.d(T.PROFILING, mLabel + ": end, " + (now - first) + " ms");
     }

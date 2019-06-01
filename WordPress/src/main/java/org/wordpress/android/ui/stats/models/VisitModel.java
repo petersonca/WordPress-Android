@@ -3,19 +3,18 @@ package org.wordpress.android.ui.stats.models;
 import java.io.Serializable;
 
 public class VisitModel implements Serializable {
-
     private int mViews;
     private int mLikes;
     private int mVisitors;
     private int mComments;
     private String mPeriod;
-    private String mBlogID;
+    private long mBlogID;
 
-    public String getBlogID() {
+    public long getBlogID() {
         return mBlogID;
     }
 
-    public void setBlogID(String blogID) {
+    public void setBlogID(long blogID) {
         this.mBlogID = blogID;
     }
 
@@ -58,5 +57,4 @@ public class VisitModel implements Serializable {
     public void setPeriod(String period) {
         this.mPeriod = period;
     }
-
 }

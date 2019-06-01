@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.res.Resources;
 
 import org.wordpress.android.R;
-import org.wordpress.android.ui.WPDrawerActivity;
 import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.HtmlUtils;
 
@@ -12,64 +11,44 @@ import org.wordpress.android.util.HtmlUtils;
  * class which holds all resource-based variables used when rendering post detail
  */
 class ReaderResourceVars {
-    final int displayWidthPx;
-    final int likeAvatarSizePx;
-    final int headerAvatarSizePx;
+    final int mMarginMediumPx;
 
-    final int marginLargePx;
-    final int marginSmallPx;
-    final int marginExtraSmallPx;
-    final int detailMarginWidthPx;
+    final boolean mIsWideDisplay;
 
-    final int fullSizeImageWidthPx;
-    final int featuredImageHeightPx;
+    final int mFullSizeImageWidthPx;
+    final int mFeaturedImageHeightPx;
 
-    final int videoWidthPx;
-    final int videoHeightPx;
+    final int mVideoWidthPx;
+    final int mVideoHeightPx;
 
-    final int colorGreyExtraLight;
-    final int mediumAnimTime;
-
-    final String linkColorStr;
-    final String greyMediumDarkStr;
-    final String greyLightStr;
-    final String greyExtraLightStr;
+    final String mLinkColorStr;
+    final String mGreyMediumDarkStr;
+    final String mGreyLightStr;
+    final String mGreyExtraLightStr;
 
     ReaderResourceVars(Context context) {
         Resources resources = context.getResources();
 
-        displayWidthPx = DisplayUtils.getDisplayPixelWidth(context);
-        likeAvatarSizePx = resources.getDimensionPixelSize(R.dimen.avatar_sz_small);
-        headerAvatarSizePx = resources.getDimensionPixelSize(R.dimen.avatar_sz_medium);
-        featuredImageHeightPx = resources.getDimensionPixelSize(R.dimen.reader_featured_image_height);
+        int displayWidthPx = DisplayUtils.getDisplayPixelWidth(context);
 
-        marginLargePx = resources.getDimensionPixelSize(R.dimen.margin_large);
-        marginSmallPx = resources.getDimensionPixelSize(R.dimen.margin_small);
-        marginExtraSmallPx = resources.getDimensionPixelSize(R.dimen.margin_extra_small);
-        detailMarginWidthPx = resources.getDimensionPixelOffset(R.dimen.reader_detail_margin);
+        mIsWideDisplay = DisplayUtils.pxToDp(context, displayWidthPx) > 640;
 
-        colorGreyExtraLight = resources.getColor(R.color.grey_extra_light);
-        mediumAnimTime = resources.getInteger(android.R.integer.config_mediumAnimTime);
+        int marginLargePx = resources.getDimensionPixelSize(R.dimen.margin_large);
+        int detailMarginWidthPx = resources.getDimensionPixelOffset(R.dimen.reader_detail_margin);
 
-        linkColorStr = HtmlUtils.colorResToHtmlColor(context, R.color.reader_hyperlink);
-        greyMediumDarkStr = HtmlUtils.colorResToHtmlColor(context, R.color.grey_medium_dark);
-        greyLightStr = HtmlUtils.colorResToHtmlColor(context, R.color.grey_light);
-        greyExtraLightStr = HtmlUtils.colorResToHtmlColor(context, R.color.grey_extra_light);
+        mFeaturedImageHeightPx = resources.getDimensionPixelSize(R.dimen.reader_featured_image_height);
+        mMarginMediumPx = resources.getDimensionPixelSize(R.dimen.margin_medium);
 
-        // full-size image width must take margin and padding into account
-        int listPadding = resources.getDimensionPixelOffset(R.dimen.margin_large);
-        int imageWidth = displayWidthPx - (detailMarginWidthPx * 2) - (listPadding * 2);
-        boolean hasStaticMenuDrawer =
-                (context instanceof WPDrawerActivity)
-                        && (((WPDrawerActivity) context).isStaticMenuDrawer());
-        if (hasStaticMenuDrawer) {
-            int drawerWidth = resources.getDimensionPixelOffset(R.dimen.drawer_width_static);
-            imageWidth -= drawerWidth;
-        }
-        fullSizeImageWidthPx = imageWidth;
+        mLinkColorStr = HtmlUtils.colorResToHtmlColor(context, R.color.link_reader);
+        mGreyMediumDarkStr = HtmlUtils.colorResToHtmlColor(context, R.color.neutral_600);
+        mGreyLightStr = HtmlUtils.colorResToHtmlColor(context, R.color.neutral_0);
+        mGreyExtraLightStr = HtmlUtils.colorResToHtmlColor(context, R.color.neutral_0);
+
+        // full-size image width must take margin into account
+        mFullSizeImageWidthPx = displayWidthPx - (detailMarginWidthPx * 2);
 
         // 16:9 ratio (YouTube standard)
-        videoWidthPx = fullSizeImageWidthPx - (marginLargePx * 2);
-        videoHeightPx = (int) (videoWidthPx * 0.5625f);
+        mVideoWidthPx = mFullSizeImageWidthPx - (marginLargePx * 2);
+        mVideoHeightPx = (int) (mVideoWidthPx * 0.5625f);
     }
 }

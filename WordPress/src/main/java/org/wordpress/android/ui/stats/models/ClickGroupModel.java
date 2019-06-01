@@ -6,7 +6,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.ui.stats.StatsUtils;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.JSONUtils;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -16,7 +16,7 @@ import java.util.List;
  * A model to represent a click group stat
  */
 public class ClickGroupModel implements Serializable {
-    private String mBlogId;
+    private long mBlogId;
     private long mDate;
 
     private String mGroupId;
@@ -26,18 +26,18 @@ public class ClickGroupModel implements Serializable {
     private String mUrl;
     private List<SingleItemModel> mClicks;
 
-    public ClickGroupModel(String blogId, String date, JSONObject clickGroupJSON) throws JSONException {
+    public ClickGroupModel(long blogId, String date, JSONObject clickGroupJSON) throws JSONException {
         setBlogId(blogId);
         setDate(StatsUtils.toMs(date));
 
         setGroupId(clickGroupJSON.getString("name"));
         setName(clickGroupJSON.getString("name"));
         setViews(clickGroupJSON.getInt("views"));
-        setIcon(JSONUtil.getString(clickGroupJSON, "icon"));
+        setIcon(JSONUtils.getString(clickGroupJSON, "icon"));
 
         // if URL is set in the response there is one result only. No need to unfold "results"
-        if (!TextUtils.isEmpty(JSONUtil.getString(clickGroupJSON, "url"))) {
-            setUrl(JSONUtil.getString(clickGroupJSON, "url"));
+        if (!TextUtils.isEmpty(JSONUtils.getString(clickGroupJSON, "url"))) {
+            setUrl(JSONUtils.getString(clickGroupJSON, "url"));
         } else {
             JSONArray childrenJSON = clickGroupJSON.getJSONArray("children");
             mClicks = new ArrayList<>(childrenJSON.length());
@@ -53,19 +53,19 @@ public class ClickGroupModel implements Serializable {
         }
     }
 
-    public String getBlogId() {
+    public long getBlogId() {
         return mBlogId;
     }
 
-    public void setBlogId(String blogId) {
-        this.mBlogId = blogId;
+    public void setBlogId(long blogId) {
+        mBlogId = blogId;
     }
 
     public long getDate() {
         return mDate;
     }
 
-    public void setDate(long date) {
+    private void setDate(long date) {
         this.mDate = date;
     }
 
@@ -73,7 +73,7 @@ public class ClickGroupModel implements Serializable {
         return mGroupId;
     }
 
-    public void setGroupId(String groupId) {
+    private void setGroupId(String groupId) {
         this.mGroupId = groupId;
     }
 
@@ -81,7 +81,7 @@ public class ClickGroupModel implements Serializable {
         return mName;
     }
 
-    public void setName(String name) {
+    private void setName(String name) {
         this.mName = name;
     }
 
@@ -89,7 +89,7 @@ public class ClickGroupModel implements Serializable {
         return mViews;
     }
 
-    public void setViews(int total) {
+    private void setViews(int total) {
         this.mViews = total;
     }
 
@@ -97,7 +97,7 @@ public class ClickGroupModel implements Serializable {
         return mUrl;
     }
 
-    public void setUrl(String url) {
+    private void setUrl(String url) {
         this.mUrl = url;
     }
 
@@ -105,9 +105,11 @@ public class ClickGroupModel implements Serializable {
         return mIcon;
     }
 
-    public void setIcon(String icon) {
+    private void setIcon(String icon) {
         this.mIcon = icon;
     }
 
-    public List<SingleItemModel> getClicks() { return mClicks; }
+    public List<SingleItemModel> getClicks() {
+        return mClicks;
+    }
 }

@@ -12,23 +12,6 @@ public class PhotonUtils {
     }
 
     /*
-     * gravatars often contain the ?s= parameter which determines their size - detect this and
-     * replace it with a new ?s= parameter which requests the avatar at the exact size needed
-     */
-    public static String fixAvatar(final String imageUrl, int avatarSz) {
-        if (TextUtils.isEmpty(imageUrl))
-            return "";
-
-        // if this isn't a gravatar image, return as resized photon image url
-        if (!imageUrl.contains("gravatar.com")) {
-            return getPhotonImageUrl(imageUrl, avatarSz, avatarSz);
-        }
-
-        // remove all other params, then add query string for size and "mystery man" default
-        return UrlUtils.removeQuery(imageUrl) + "?s=" + avatarSz + "&d=mm";
-    }
-
-    /*
     * returns true if the passed url is an obvious "mshots" url
     */
     public static boolean isMshotsUrl(final String imageUrl) {
@@ -39,14 +22,16 @@ public class PhotonUtils {
      * returns a photon url for the passed image with the resize query set to the passed
      * dimensions - note that the passed quality parameter will only affect JPEGs
      */
-    public static enum Quality {
+    public enum Quality {
         HIGH,
         MEDIUM,
         LOW
     }
+
     public static String getPhotonImageUrl(String imageUrl, int width, int height) {
         return getPhotonImageUrl(imageUrl, width, height, Quality.MEDIUM);
     }
+
     public static String getPhotonImageUrl(String imageUrl, int width, int height, Quality quality) {
         if (TextUtils.isEmpty(imageUrl)) {
             return "";
@@ -58,58 +43,64 @@ public class PhotonUtils {
             return imageUrl;
         }
 
+        // we have encountered some image urls that incorrectly have a # fragment part, which
+        // must be removed before removing the query string
+        int fragmentPos = imageUrl.indexOf("#");
+        if (fragmentPos > 0) {
+            imageUrl = imageUrl.substring(0, fragmentPos);
+        }
+
         // remove existing query string since it may contain params that conflict with the passed ones
         imageUrl = UrlUtils.removeQuery(imageUrl);
-
-        // don't use with GIFs - photon breaks animated GIFs, and sometimes returns a GIF that
-        // can't be read by BitmapFactory.decodeByteArray (used by Volley in ImageRequest.java
-        // to decode the downloaded image)
-        if (imageUrl.endsWith(".gif")) {
-            return imageUrl;
-        }
 
         // if this is an "mshots" url, skip photon and return it with a query that sets the width/height
         if (isMshotsUrl(imageUrl)) {
             return imageUrl + "?w=" + width + "&h=" + height;
         }
 
-        final String qualityParam;
+        // strip=info removes Exif, IPTC and comment data from the output image.
+        String query = "?strip=info";
+
         switch (quality) {
             case HIGH:
-                qualityParam = "quality=100";
+                query += "&quality=100";
                 break;
             case LOW:
-                qualityParam = "quality=35";
+                query += "&quality=35";
                 break;
             default: // medium
-                qualityParam = "quality=65";
+                query += "&quality=65";
                 break;
         }
 
         // if both width & height are passed use the "resize" param, use only "w" or "h" if just
         // one of them is set
-        final String query;
         if (width > 0 && height > 0) {
-            query = "?resize=" + width + "," + height + "&" + qualityParam;
+            query += "&resize=" + width + "," + height;
         } else if (width > 0) {
-            query = "?w=" + width + "&" + qualityParam;
+            query += "&w=" + width;
         } else if (height > 0) {
-            query = "?h=" + height + "&" + qualityParam;
-        } else {
-            query = "?" + qualityParam;
+            query += "&h=" + height;
         }
 
         // return passed url+query if it's already a photon url
         if (imageUrl.contains(".wp.com")) {
-            if (imageUrl.contains("i0.wp.com") || imageUrl.contains("i1.wp.com") || imageUrl.contains("i2.wp.com"))
+            if (imageUrl.contains("i0.wp.com") || imageUrl.contains("i1.wp.com") || imageUrl.contains("i2.wp.com")) {
                 return imageUrl + query;
+            }
+        }
+
+        // use wordpress.com as the host if image is on wordpress.com since it supports the same
+        // query params and, more importantly, can handle images in private blogs
+        if (imageUrl.contains("wordpress.com")) {
+            return imageUrl + query;
         }
 
         // must use https for https image urls
         if (UrlUtils.isHttps(imageUrl)) {
-            return "https://i0.wp.com/" + imageUrl.substring(schemePos+3, imageUrl.length()) + query;
+            return "https://i0.wp.com/" + imageUrl.substring(schemePos + 3, imageUrl.length()) + query;
         } else {
-            return "http://i0.wp.com/" + imageUrl.substring(schemePos+3, imageUrl.length()) + query;
+            return "http://i0.wp.com/" + imageUrl.substring(schemePos + 3, imageUrl.length()) + query;
         }
     }
 }

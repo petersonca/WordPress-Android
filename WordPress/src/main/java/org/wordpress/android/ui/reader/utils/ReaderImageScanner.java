@@ -1,11 +1,8 @@
 package org.wordpress.android.ui.reader.utils;
 
-import android.net.Uri;
-import android.text.TextUtils;
+import android.support.annotation.NonNull;
 
 import org.wordpress.android.ui.reader.models.ReaderImageList;
-import org.wordpress.android.util.PhotonUtils;
-import org.wordpress.android.util.UrlUtils;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -16,8 +13,8 @@ public class ReaderImageScanner {
     private final boolean mContentContainsImages;
 
     private static final Pattern IMG_TAG_PATTERN = Pattern.compile(
-            "<img(\\s+.*?)(?:src\\s*=\\s*(?:'|\")(.*?)(?:'|\"))(.*?)>",
-            Pattern.DOTALL| Pattern.CASE_INSENSITIVE);
+            "<img[^>]* src=\\\"([^\\\"]*)\\\"[^>]*>",
+            Pattern.CASE_INSENSITIVE);
 
     public ReaderImageScanner(String contentOfPost, boolean isPrivate) {
         mContent = contentOfPost;
@@ -34,26 +31,22 @@ public class ReaderImageScanner {
         }
 
         if (!mContentContainsImages) {
-            listener.onScanCompleted();
             return;
         }
 
         Matcher imgMatcher = IMG_TAG_PATTERN.matcher(mContent);
         while (imgMatcher.find()) {
-            String imageTag = mContent.substring(imgMatcher.start(), imgMatcher.end());
-            String imageUrl = ReaderHtmlUtils.getSrcAttrValue(imageTag);
-            if (!TextUtils.isEmpty(imageUrl)) {
-                listener.onTagFound(imageTag, imageUrl, imgMatcher.start(), imgMatcher.end());
-            }
+            String imageTag = imgMatcher.group(0);
+            String imageUrl = imgMatcher.group(1);
+            listener.onTagFound(imageTag, imageUrl);
         }
-
-        listener.onScanCompleted();
     }
 
     /*
-     * returns a list of all images in the content
+     * returns a list of image URLs in the content up to the max above a certain width - pass zero
+     * to include all images regardless of size
      */
-    public ReaderImageList getImageList() {
+    public ReaderImageList getImageList(int maxImageCount, int minImageWidth) {
         ReaderImageList imageList = new ReaderImageList(mIsPrivate);
 
         if (!mContentContainsImages) {
@@ -62,11 +55,32 @@ public class ReaderImageScanner {
 
         Matcher imgMatcher = IMG_TAG_PATTERN.matcher(mContent);
         while (imgMatcher.find()) {
-            String imgTag = mContent.substring(imgMatcher.start(), imgMatcher.end());
-            imageList.addImageUrl(ReaderHtmlUtils.getSrcAttrValue(imgTag));
+            String imageTag = imgMatcher.group(0);
+            String imageUrl = imgMatcher.group(1);
+
+            if (minImageWidth == 0) {
+                imageList.addImageUrl(imageUrl);
+            } else {
+                int width = Math.max(ReaderHtmlUtils.getWidthAttrValue(imageTag),
+                                     ReaderHtmlUtils.getIntQueryParam(imageUrl, "w"));
+                if (width >= minImageWidth) {
+                    imageList.addImageUrl(imageUrl);
+                    if (maxImageCount > 0 && imageList.size() >= maxImageCount) {
+                        break;
+                    }
+                }
+            }
         }
 
         return imageList;
+    }
+
+    /*
+     * returns true if there at least `minImageCount` images in the post content that are at
+     * least `minImageWidth` in size
+     */
+    public boolean hasUsableImageCount(int minImageCount, int minImageWidth) {
+        return getImageList(minImageCount, minImageWidth).size() == minImageCount;
     }
 
     /*
@@ -83,13 +97,16 @@ public class ReaderImageScanner {
 
         Matcher imgMatcher = IMG_TAG_PATTERN.matcher(mContent);
         while (imgMatcher.find()) {
-            String imgTag = mContent.substring(imgMatcher.start(), imgMatcher.end());
-            String imageUrl = ReaderHtmlUtils.getSrcAttrValue(imgTag);
+            String imageTag = imgMatcher.group(0);
+            String imageUrl = imgMatcher.group(1);
 
-            int width = Math.max(ReaderHtmlUtils.getWidthAttrValue(imgTag), ReaderHtmlUtils.getIntQueryParam(imageUrl, "w"));
+            int width = Math.max(ReaderHtmlUtils.getWidthAttrValue(imageTag),
+                                 ReaderHtmlUtils.getIntQueryParam(imageUrl, "w"));
             if (width > currentMaxWidth) {
                 currentImageUrl = imageUrl;
                 currentMaxWidth = width;
+            } else if (currentImageUrl == null && hasSuitableClassForFeaturedImage(imageTag)) {
+                currentImageUrl = imageUrl;
             }
         }
 
@@ -97,32 +114,22 @@ public class ReaderImageScanner {
     }
 
     /*
-     * returns the actual image url from a Freshly Pressed featured image url - this is necessary because the
-     * featured image returned by the API is often an ImagePress url that formats the actual image url for a
-     * specific size, and we want to define the size in the app when the image is requested.
-     * here's an example of an ImagePress featured image url from a freshly-pressed post:
-     *   https://s1.wp.com/imgpress?
-     *          crop=0px%2C0px%2C252px%2C160px
-     *          &url=https%3A%2F%2Fs2.wp.com%2Fimgpress%3Fw%3D252%26url%3Dhttp%253A%252F%252Fmostlybrightideas.files.wordpress.com%252F2013%252F08%252Ftablet.png
-     *          &unsharpmask=80,0.5,3
+     * returns true if the passed image tag has a "size-" class attribute which would make it
+     * suitable for use as a featured image
      */
-    public static String getImageUrlFromFPFeaturedImageUrl(final String url) {
-        if (url == null || !url.startsWith("http")) {
-            return null;
-        } else if (url.contains("/imgpress")) {
-            String imageUrl = Uri.parse(url).getQueryParameter("url");
-            if (imageUrl != null && imageUrl.contains("url=")) {
-                // url still contains a url= param, process it again
-                return getImageUrlFromFPFeaturedImageUrl(imageUrl);
-            } else {
-                return UrlUtils.removeQuery(imageUrl);
-            }
-        } else if (PhotonUtils.isMshotsUrl(url)) {
-            // if this is an mshots image, return the actual url without the query string (?h=n&w=n),
-            // and change it from https to http so it can be cached
-            return UrlUtils.removeQuery(url).replaceFirst("https", "http");
-        } else {
-            return url;
-        }
+    private boolean hasSuitableClassForFeaturedImage(@NonNull String imageTag) {
+        String tagClass = ReaderHtmlUtils.getClassAttrValue(imageTag);
+        return (tagClass != null
+                && (tagClass.contains("size-full")
+                    || tagClass.contains("size-large")
+                    || tagClass.contains("size-medium")));
+    }
+
+    /*
+     * same as above, but doesn't enforce the max width - will return the first image found if
+     * no images have their width set
+     */
+    public String getLargestImage() {
+        return getLargestImage(-1);
     }
 }

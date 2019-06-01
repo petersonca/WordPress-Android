@@ -1,14 +1,16 @@
 buildscript {
     repositories {
-        mavenCentral()
+        google()
+        jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:1.0.0'
+        classpath 'com.android.tools.build:gradle:3.2.1'
     }
 }
 
 repositories {
-    mavenCentral()
+    google()
+    jcenter()
     maven { url 'http://wordpress-mobile.github.io/WordPress-Android' }
 }
 
@@ -16,25 +18,21 @@ apply plugin: 'com.android.library'
 apply plugin: 'maven'
 
 android {
-    publishNonDefault true
-
-    compileSdkVersion 19
-    buildToolsVersion "21.1.1"
+    compileSdkVersion 28
+    buildToolsVersion '28.0.3'
 
     defaultConfig {
         minSdkVersion 14
-        targetSdkVersion 19
+        targetSdkVersion 26
         versionName "1.0.0"
     }
 }
 
 dependencies {
-    compile 'com.mcxiaoke.volley:library:1.0.+'
+    implementation 'org.wordpress:utils:1.18.1'
+    implementation 'com.automattic:rest:1.0.7'
 
-    releaseCompile project(path:':libs:utils:WordPressUtils', configuration: 'release')
-    debugCompile project(path:':libs:utils:WordPressUtils', configuration: 'debug')
-    releaseCompile project(path:':libs:wpcomrest:WordPressComRest', configuration: 'release')
-    debugCompile project(path:':libs:wpcomrest:WordPressComRest', configuration: 'debug')
+    lintChecks 'org.wordpress:lint:1.0.1'
 }
 
 uploadArchives {

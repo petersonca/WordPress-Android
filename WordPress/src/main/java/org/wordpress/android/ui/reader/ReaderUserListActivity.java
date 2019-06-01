@@ -1,10 +1,11 @@
 package org.wordpress.android.ui.reader;
 
+import android.content.Context;
 import android.os.Bundle;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.Toolbar;
-import android.view.MenuItem;
 import android.view.View;
 
 import org.wordpress.android.R;
@@ -16,15 +17,21 @@ import org.wordpress.android.ui.reader.adapters.ReaderUserAdapter;
 import org.wordpress.android.ui.reader.utils.ReaderUtils;
 import org.wordpress.android.ui.reader.views.ReaderRecyclerView;
 import org.wordpress.android.util.DisplayUtils;
+import org.wordpress.android.util.LocaleManager;
+import org.wordpress.android.widgets.RecyclerItemDecoration;
 
 /*
  * displays a list of users who like a specific reader post
  */
-public class ReaderUserListActivity extends ActionBarActivity {
-
+public class ReaderUserListActivity extends AppCompatActivity {
     private ReaderRecyclerView mRecyclerView;
     private ReaderUserAdapter mAdapter;
     private int mRestorePosition;
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -34,15 +41,21 @@ public class ReaderUserListActivity extends ActionBarActivity {
         setTitle(null);
 
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
-        toolbar.setNavigationOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                onBackPressed();
-            }
-        });
-        getSupportActionBar().setDisplayShowTitleEnabled(true);
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        if (toolbar != null) {
+            setSupportActionBar(toolbar);
+            toolbar.setNavigationOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    onBackPressed();
+                }
+            });
+        }
+
+        ActionBar actionBar = getSupportActionBar();
+        if (actionBar != null) {
+            getSupportActionBar().setDisplayShowTitleEnabled(true);
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        }
 
         if (savedInstanceState != null) {
             mRestorePosition = savedInstanceState.getInt(ReaderConstants.KEY_RESTORE_POSITION);
@@ -51,7 +64,7 @@ public class ReaderUserListActivity extends ActionBarActivity {
         int spacingHorizontal = 0;
         int spacingVertical = DisplayUtils.dpToPx(this, 1);
         mRecyclerView = (ReaderRecyclerView) findViewById(R.id.recycler_view);
-        mRecyclerView.addItemDecoration(new ReaderRecyclerView.ReaderItemDecoration(spacingHorizontal, spacingVertical));
+        mRecyclerView.addItemDecoration(new RecyclerItemDecoration(spacingHorizontal, spacingVertical));
 
         long blogId = getIntent().getLongExtra(ReaderConstants.ARG_BLOG_ID, 0);
         long postId = getIntent().getLongExtra(ReaderConstants.ARG_POST_ID, 0);
@@ -135,5 +148,4 @@ public class ReaderUserListActivity extends ActionBarActivity {
         }
         return ReaderUtils.getLongLikeLabelText(this, numLikes, isLikedByCurrentUser);
     }
-
 }

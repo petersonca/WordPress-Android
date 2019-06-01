@@ -1,57 +1,50 @@
 package org.wordpress.android.ui.stats;
 
-import android.app.Activity;
-import android.app.FragmentManager;
-import android.app.FragmentTransaction;
-import android.content.Intent;
+import android.content.Context;
 import android.os.Bundle;
-import android.os.Handler;
-import android.support.v4.content.LocalBroadcastManager;
-import android.support.v4.widget.SwipeRefreshLayout;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
 import android.support.v7.app.ActionBar;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.AppCompatActivity;
+import android.text.TextUtils;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.TextView;
 
-import com.android.volley.VolleyError;
-import com.wordpress.rest.RestRequest;
-
-import org.json.JSONException;
-import org.json.JSONObject;
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
-import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
-import org.wordpress.android.networking.RestClientUtils;
-import org.wordpress.android.ui.stats.service.StatsService;
+import org.wordpress.android.analytics.AnalyticsTracker.Stat;
+import org.wordpress.android.ui.ActivityId;
 import org.wordpress.android.util.AppLog;
+import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.ToastUtils;
-import org.wordpress.android.util.ptr.SwipeToRefreshHelper;
+import org.wordpress.android.util.helpers.SwipeToRefreshHelper;
+import org.wordpress.android.util.widgets.CustomSwipeRefreshLayout;
 
 import java.io.Serializable;
-import java.lang.ref.WeakReference;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.Locale;
 
+import static org.wordpress.android.util.WPSwipeToRefreshHelper.buildSwipeToRefreshHelper;
 
 /**
- *  Single item details activity.
+ * Single item details activity.
  */
-public class StatsViewAllActivity extends ActionBarActivity
-        implements StatsAuthorsFragment.OnAuthorsSectionChangeListener,
-        StatsAbstractListFragment.OnRequestDataListener,
-        StatsAbstractFragment.TimeframeDateProvider {
+public class StatsViewAllActivity extends AppCompatActivity {
+    public static final String ARG_STATS_VIEW_ALL_TITLE = "arg_stats_view_all_title";
+    private static final String SAVED_STATS_SCROLL_POSITION = "SAVED_STATS_SCROLL_POSITION";
 
     private boolean mIsInFront;
     private boolean mIsUpdatingStats;
     private SwipeToRefreshHelper mSwipeToRefreshHelper;
-
-    private final Handler mHandler = new Handler();
+    private ScrollViewExt mOuterScrollView;
 
     private StatsAbstractListFragment mFragment;
 
@@ -62,12 +55,10 @@ public class StatsViewAllActivity extends ActionBarActivity
     private Serializable[] mRestResponse;
     private int mOuterPagerSelectedButtonIndex = 0;
 
-    // The number of results to return per page for Paged REST endpoints. Numbers larger than 20 will default to 20 on the server.
-    private static final int MAX_RESULTS_PER_PAGE = 20;
-
-    // The number of results to return for NON Paged REST endpoints.
-    private static final int MAX_RESULTS_REQUESTED = 100;
-
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -75,48 +66,76 @@ public class StatsViewAllActivity extends ActionBarActivity
 
         setContentView(R.layout.stats_activity_view_all);
 
-        if (savedInstanceState == null) {
-            AnalyticsTracker.track(AnalyticsTracker.Stat.STATS_VIEW_ALL_ACCESSED);
-        }
-
         ActionBar actionBar = getSupportActionBar();
         if (actionBar != null) {
             actionBar.setDisplayHomeAsUpEnabled(true);
         }
 
+        setTitle(R.string.stats);
+
+        mOuterScrollView = (ScrollViewExt) findViewById(R.id.scroll_view_stats);
+
         // pull to refresh setup
-        mSwipeToRefreshHelper = new SwipeToRefreshHelper(this, (SwipeRefreshLayout) findViewById(R.id.ptr_layout),
+        mSwipeToRefreshHelper = buildSwipeToRefreshHelper(
+                (CustomSwipeRefreshLayout) findViewById(R.id.ptr_layout),
                 new SwipeToRefreshHelper.RefreshListener() {
                     @Override
                     public void onRefreshStarted() {
                         if (!NetworkUtils.checkConnection(getBaseContext())) {
                             mSwipeToRefreshHelper.setRefreshing(false);
+                            mIsUpdatingStats = false;
                             return;
                         }
+
+                        if (mIsUpdatingStats) {
+                            AppLog.w(AppLog.T.STATS, "stats are already updating, refresh cancelled");
+                            return;
+                        }
+
                         refreshStats();
                     }
                 }
         );
 
         if (savedInstanceState != null) {
-            mLocalBlogID = savedInstanceState.getInt(StatsActivity.ARG_LOCAL_TABLE_BLOG_ID, -1);
+            mLocalBlogID = savedInstanceState.getInt(OldStatsActivity.ARG_LOCAL_TABLE_SITE_ID, -1);
             Serializable oldData = savedInstanceState.getSerializable(StatsAbstractFragment.ARG_REST_RESPONSE);
             if (oldData != null && oldData instanceof Serializable[]) {
                 mRestResponse = (Serializable[]) oldData;
             }
             mTimeframe = (StatsTimeframe) savedInstanceState.getSerializable(StatsAbstractFragment.ARGS_TIMEFRAME);
-            mDate = savedInstanceState.getString(StatsAbstractFragment.ARGS_START_DATE);
-            int ordinal = savedInstanceState.getInt(StatsAbstractFragment.ARGS_VIEW_TYPE, 0);
-            mStatsViewType = StatsViewType.values()[ordinal];
-            mOuterPagerSelectedButtonIndex = savedInstanceState.getInt(StatsAbstractListFragment.ARGS_TOP_PAGER_SELECTED_BUTTON_INDEX, 0);
+            mDate = savedInstanceState.getString(StatsAbstractFragment.ARGS_SELECTED_DATE);
+            mStatsViewType = (StatsViewType) savedInstanceState.getSerializable(StatsAbstractFragment.ARGS_VIEW_TYPE);
+            mOuterPagerSelectedButtonIndex =
+                    savedInstanceState.getInt(StatsAbstractListFragment.ARGS_TOP_PAGER_SELECTED_BUTTON_INDEX, 0);
+            final int yScrollPosition = savedInstanceState.getInt(SAVED_STATS_SCROLL_POSITION);
+            if (yScrollPosition != 0) {
+                mOuterScrollView.postDelayed(new Runnable() {
+                    public void run() {
+                        if (!isFinishing()) {
+                            mOuterScrollView.scrollTo(0, yScrollPosition);
+                        }
+                    }
+                }, StatsConstants.STATS_SCROLL_TO_DELAY);
+            }
         } else if (getIntent() != null) {
             Bundle extras = getIntent().getExtras();
-            mLocalBlogID = extras.getInt(StatsActivity.ARG_LOCAL_TABLE_BLOG_ID, -1);
+            mLocalBlogID = extras.getInt(OldStatsActivity.ARG_LOCAL_TABLE_SITE_ID, -1);
             mTimeframe = (StatsTimeframe) extras.getSerializable(StatsAbstractFragment.ARGS_TIMEFRAME);
-            mDate = extras.getString(StatsAbstractFragment.ARGS_START_DATE);
-            int ordinal = extras.getInt(StatsAbstractFragment.ARGS_VIEW_TYPE, 0);
-            mStatsViewType = StatsViewType.values()[ordinal];
-            mOuterPagerSelectedButtonIndex = extras.getInt(StatsAbstractListFragment.ARGS_TOP_PAGER_SELECTED_BUTTON_INDEX, 0);
+            mDate = extras.getString(StatsAbstractFragment.ARGS_SELECTED_DATE);
+            mStatsViewType = (StatsViewType) extras.getSerializable(StatsAbstractFragment.ARGS_VIEW_TYPE);
+            mOuterPagerSelectedButtonIndex =
+                    extras.getInt(StatsAbstractListFragment.ARGS_TOP_PAGER_SELECTED_BUTTON_INDEX, 0);
+
+            // Set a custom activity title if one was passed
+            if (!TextUtils.isEmpty(extras.getString(ARG_STATS_VIEW_ALL_TITLE))) {
+                setTitle(extras.getString(ARG_STATS_VIEW_ALL_TITLE));
+            }
+        }
+
+        if (mStatsViewType == null || mTimeframe == null || mDate == null) {
+            ToastUtils.showToast(this, R.string.stats_generic_error, ToastUtils.Duration.SHORT);
+            finish();
         }
 
         // Setup the top date label. It's available on those fragments that are affected by the top date selector.
@@ -137,9 +156,7 @@ public class StatsViewAllActivity extends ActionBarActivity
                 break;
         }
 
-        setTitle(R.string.stats);
-
-        FragmentManager fm = getFragmentManager();
+        FragmentManager fm = getSupportFragmentManager();
         FragmentTransaction ft = fm.beginTransaction();
         mFragment = (StatsAbstractListFragment) fm.findFragmentByTag("ViewAll-Fragment");
         if (mFragment == null) {
@@ -147,32 +164,78 @@ public class StatsViewAllActivity extends ActionBarActivity
             ft.replace(R.id.stats_single_view_fragment, mFragment, "ViewAll-Fragment");
             ft.commitAllowingStateLoss();
         }
+
+        if (savedInstanceState == null) {
+            AnalyticsTracker.track(Stat.STATS_VIEW_ALL_ACCESSED);
+        }
     }
+
+    @Override
+    protected void onStop() {
+        EventBus.getDefault().unregister(this);
+        super.onStop();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        EventBus.getDefault().register(this);
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.UpdateStatusStarted event) {
+        if (isFinishing() || !mIsInFront) {
+            return;
+        }
+        mSwipeToRefreshHelper.setRefreshing(true);
+        mIsUpdatingStats = true;
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.UpdateStatusFinished event) {
+        if (isFinishing() || !mIsInFront) {
+            return;
+        }
+        mSwipeToRefreshHelper.setRefreshing(false);
+        mIsUpdatingStats = false;
+    }
+
 
     private String getDateForDisplayInLabels(String date, StatsTimeframe timeframe) {
         String prefix = getString(R.string.stats_for);
         switch (timeframe) {
             case DAY:
-                return String.format(prefix, StatsUtils.parseDate(date, StatsConstants.STATS_INPUT_DATE_FORMAT, "MMMM d"));
+                return String.format(prefix, StatsUtils.parseDateToLocalizedFormat(date,
+                        StatsConstants.STATS_INPUT_DATE_FORMAT,
+                        StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_DAY_SHORT_FORMAT));
             case WEEK:
                 try {
-                    SimpleDateFormat sdf = new SimpleDateFormat(StatsConstants.STATS_INPUT_DATE_FORMAT);
+                    SimpleDateFormat sdf = new SimpleDateFormat(StatsConstants.STATS_INPUT_DATE_FORMAT,
+                            Locale.getDefault());
                     final Date parsedDate = sdf.parse(date);
                     Calendar c = Calendar.getInstance();
                     c.setTime(parsedDate);
-                    String  endDateLabel = StatsUtils.msToString(c.getTimeInMillis(), StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_DAY_LONG_FORMAT);
+                    String endDateLabel = StatsUtils.msToLocalizedString(c.getTimeInMillis(),
+                            StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_DAY_LONG_FORMAT);
                     // last day of this week
-                    c.add(Calendar.DAY_OF_WEEK, - 6);
-                    String startDateLabel = StatsUtils.msToString(c.getTimeInMillis(), StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_DAY_LONG_FORMAT);
-                    return String.format(prefix,  startDateLabel + " - " + endDateLabel);
+                    c.add(Calendar.DAY_OF_WEEK, -6);
+                    String startDateLabel = StatsUtils.msToLocalizedString(c.getTimeInMillis(),
+                            StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_DAY_LONG_FORMAT);
+                    return String.format(prefix, startDateLabel + " - " + endDateLabel);
                 } catch (ParseException e) {
                     AppLog.e(AppLog.T.UTILS, e);
                     return "";
                 }
             case MONTH:
-                return String.format(prefix, StatsUtils.parseDate(date, StatsConstants.STATS_INPUT_DATE_FORMAT, StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_FORMAT));
+                return String.format(prefix, StatsUtils.parseDateToLocalizedFormat(date,
+                        StatsConstants.STATS_INPUT_DATE_FORMAT,
+                        StatsConstants.STATS_OUTPUT_DATE_MONTH_LONG_FORMAT));
             case YEAR:
-                return String.format(prefix, StatsUtils.parseDate(date, StatsConstants.STATS_INPUT_DATE_FORMAT, StatsConstants.STATS_OUTPUT_DATE_YEAR_FORMAT));
+                return String.format(prefix, StatsUtils.parseDateToLocalizedFormat(date,
+                        StatsConstants.STATS_INPUT_DATE_FORMAT,
+                        StatsConstants.STATS_OUTPUT_DATE_YEAR_FORMAT));
         }
         return "";
     }
@@ -215,12 +278,13 @@ public class StatsViewAllActivity extends ActionBarActivity
                 break;
         }
 
+        fragment.setTimeframe(mTimeframe);
+        fragment.setDate(mDate);
+
         Bundle args = new Bundle();
-        args.putInt(StatsActivity.ARG_LOCAL_TABLE_BLOG_ID, mLocalBlogID);
-        args.putInt(StatsAbstractFragment.ARGS_VIEW_TYPE, mStatsViewType.ordinal());
-        args.putSerializable(StatsAbstractFragment.ARGS_TIMEFRAME, mTimeframe);
+        args.putInt(OldStatsActivity.ARG_LOCAL_TABLE_SITE_ID, mLocalBlogID);
+        args.putSerializable(StatsAbstractFragment.ARGS_VIEW_TYPE, mStatsViewType);
         args.putBoolean(StatsAbstractListFragment.ARGS_IS_SINGLE_VIEW, true); // Always true here
-        args.putString(StatsAbstractFragment.ARGS_START_DATE, mDate);
         args.putInt(StatsAbstractListFragment.ARGS_TOP_PAGER_SELECTED_BUTTON_INDEX, mOuterPagerSelectedButtonIndex);
         args.putSerializable(StatsAbstractFragment.ARG_REST_RESPONSE, mRestResponse);
         fragment.setArguments(args);
@@ -229,12 +293,15 @@ public class StatsViewAllActivity extends ActionBarActivity
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        outState.putInt(StatsActivity.ARG_LOCAL_TABLE_BLOG_ID, mLocalBlogID);
+        outState.putInt(OldStatsActivity.ARG_LOCAL_TABLE_SITE_ID, mLocalBlogID);
         outState.putSerializable(StatsAbstractFragment.ARG_REST_RESPONSE, mRestResponse);
         outState.putSerializable(StatsAbstractFragment.ARGS_TIMEFRAME, mTimeframe);
-        outState.putString(StatsAbstractFragment.ARGS_START_DATE, mDate);
-        outState.putInt(StatsAbstractFragment.ARGS_VIEW_TYPE, mStatsViewType.ordinal());
+        outState.putString(StatsAbstractFragment.ARGS_SELECTED_DATE, mDate);
+        outState.putSerializable(StatsAbstractFragment.ARGS_VIEW_TYPE, mStatsViewType);
         outState.putInt(StatsAbstractListFragment.ARGS_TOP_PAGER_SELECTED_BUTTON_INDEX, mOuterPagerSelectedButtonIndex);
+        if (mOuterScrollView.getScrollY() != 0) {
+            outState.putInt(SAVED_STATS_SCROLL_POSITION, mOuterScrollView.getScrollY());
+        }
         super.onSaveInstanceState(outState);
     }
 
@@ -242,6 +309,8 @@ public class StatsViewAllActivity extends ActionBarActivity
     protected void onResume() {
         super.onResume();
         mIsInFront = true;
+        NetworkUtils.checkConnection(this); // show the error toast if the network is offline
+        ActivityId.trackLastActivity(ActivityId.STATS_VIEW_ALL);
     }
 
     @Override
@@ -263,216 +332,18 @@ public class StatsViewAllActivity extends ActionBarActivity
         }
     }
 
-    private String getRestPath(StatsService.StatsEndpointsEnum restEndpoint, int pageNumber) {
-        final String blogId = StatsUtils.getBlogId(mLocalBlogID);
-        String endpointPath = "";
-        switch (restEndpoint) {
-            case TOP_POSTS:
-                endpointPath = "top-posts";
-                break;
-            case REFERRERS:
-                endpointPath = "referrers";
-                break;
-            case CLICKS:
-                endpointPath = "clicks";
-                break;
-            case GEO_VIEWS:
-                endpointPath = "country-views";
-                break;
-            case AUTHORS:
-                endpointPath = "top-authors";
-                break;
-            case VIDEO_PLAYS:
-                endpointPath = "video-plays";
-                break;
-            case COMMENTS:
-                endpointPath = "comments";
-                break;
-            case TAGS_AND_CATEGORIES:
-                endpointPath = "tags";
-                break;
-            case PUBLICIZE:
-                endpointPath = "publicize";
-                break;
-            case SEARCH_TERMS:
-                endpointPath = "search-terms";
-                break;
-            case FOLLOWERS_WPCOM:
-                endpointPath = "followers";
-                return String.format("/sites/%s/stats/%s?type=wpcom&period=%s&date=%s&max=%s&page=%s", blogId, endpointPath,
-                        mTimeframe.getLabelForRestCall(), mDate, MAX_RESULTS_PER_PAGE, pageNumber);
-            case FOLLOWERS_EMAIL:
-                endpointPath = "followers";
-                return String.format("/sites/%s/stats/%s?type=email&period=%s&date=%s&max=%s&page=%s", blogId, endpointPath,
-                        mTimeframe.getLabelForRestCall(), mDate, MAX_RESULTS_PER_PAGE, pageNumber);
-            case COMMENT_FOLLOWERS:
-                endpointPath = "comment-followers";
-                return String.format("/sites/%s/stats/%s?period=%s&date=%s&max=%s&page=%s", blogId, endpointPath,
-                    mTimeframe.getLabelForRestCall(), mDate, MAX_RESULTS_PER_PAGE, 1);
-        }
-
-        // All other endpoints returns 100 items in details view
-        return String.format("/sites/%s/stats/%s?period=%s&date=%s&max=%s", blogId, endpointPath,
-                mTimeframe.getLabelForRestCall(), mDate, MAX_RESULTS_REQUESTED);
-    }
-
     private void refreshStats() {
         if (mIsUpdatingStats) {
             return;
         }
-
         if (!NetworkUtils.isNetworkAvailable(this)) {
             mSwipeToRefreshHelper.setRefreshing(false);
-            AppLog.w(AppLog.T.STATS, "ViewAll on "+ mFragment.getTag() + " > no connection, update canceled");
+            AppLog.w(AppLog.T.STATS, "ViewAll on " + mFragment.getTag() + " > no connection, update canceled");
             return;
         }
 
-        mSwipeToRefreshHelper.setRefreshing(true);
-        mIsUpdatingStats = true;
-        final RestClientUtils restClientUtils = WordPress.getRestClientUtilsV1_1();
-        final String blogId = StatsUtils.getBlogId(mLocalBlogID);
-        StatsService.StatsEndpointsEnum[] sections = mFragment.getSectionsToUpdate();
-        for (int i = 0; i < sections.length; i++) {
-            StatsService.StatsEndpointsEnum currentSection = sections[i];
-            String singlePostRestPath = getRestPath(currentSection, 1);
-            RestListener vListener = new RestListener(this, currentSection, blogId, mTimeframe);
-            restClientUtils.get(singlePostRestPath, vListener, vListener);
-            AppLog.d(AppLog.T.STATS, "Enqueuing the following Stats request " + singlePostRestPath);
+        if (mFragment != null) {
+            mFragment.refreshStats();
         }
-    }
-
-    @Override
-    public void onMoreDataRequested(StatsService.StatsEndpointsEnum endPointNeedUpdate, int pageNumber) {
-        if (mFragment == null) {
-            return;
-        }
-
-        if (!mFragment.isAdded()) {
-            return;
-        }
-
-        if (mIsUpdatingStats) {
-            AppLog.d(AppLog.T.STATS, "Already loading data");
-            return;
-        }
-
-        if (!NetworkUtils.isNetworkAvailable(this)) {
-            mSwipeToRefreshHelper.setRefreshing(false);
-            AppLog.w(AppLog.T.STATS, "ViewAll on "+ mFragment.getTag() + " > no connection, update canceled");
-            return;
-        }
-
-        mIsUpdatingStats = true;
-        mSwipeToRefreshHelper.setRefreshing(true);
-        final RestClientUtils restClientUtils = WordPress.getRestClientUtilsV1_1();
-        final String blogId = StatsUtils.getBlogId(mLocalBlogID);
-
-        String singlePostRestPath = getRestPath(endPointNeedUpdate, pageNumber);
-        RestListener vListener = new RestListener(this, endPointNeedUpdate, blogId, mTimeframe);
-        restClientUtils.get(singlePostRestPath, vListener, vListener);
-        AppLog.d(AppLog.T.STATS, "Enqueuing the following Stats request " + singlePostRestPath);
-    }
-
-    @Override
-    public void onRefreshRequested(StatsService.StatsEndpointsEnum[] endPointsNeedUpdate) {
-        mHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                refreshStats();
-            }
-        }, 75L);
-    }
-
-    @Override
-    public void onAuthorsVisibilityChange(boolean isEmpty) {
-        // Nothing to do here, since the section must not disappear here.
-    }
-
-    private class RestListener implements RestRequest.Listener, RestRequest.ErrorListener {
-        private final String mRequestBlogId;
-        private final StatsTimeframe mTimeframe;
-        private final StatsService.StatsEndpointsEnum mEndpointName;
-        private final WeakReference<Activity> mActivityRef;
-
-        public RestListener(Activity activity, StatsService.StatsEndpointsEnum endpointName, String blogId, StatsTimeframe timeframe) {
-                mActivityRef = new WeakReference<>(activity);
-                mRequestBlogId = blogId;
-                mTimeframe = timeframe;
-                mEndpointName = endpointName;
-        }
-
-        @Override
-        public void onResponse(final JSONObject response) {
-            if (mActivityRef.get() == null || mActivityRef.get().isFinishing()) {
-                return;
-            }
-            if (!mFragment.isAdded()) {
-                return;
-            }
-            mIsUpdatingStats = false;
-            mSwipeToRefreshHelper.setRefreshing(false);
-            // single background thread used to parse the response in BG.
-            ThreadPoolExecutor parseResponseExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
-            parseResponseExecutor.submit(new Thread() {
-                @Override
-                public void run() {
-                    if (response != null) {
-                        try {
-                            //AppLog.d(AppLog.T.STATS, response.toString());
-                            final Serializable resp = StatsUtils.parseResponse(mEndpointName, mRequestBlogId, response);
-                            notifySectionUpdated(mEndpointName, resp);
-                        } catch (JSONException e) {
-                            AppLog.e(AppLog.T.STATS, e);
-                        }
-                    }
-                }
-            });
-        }
-
-        @Override
-        public void onErrorResponse(final VolleyError volleyError) {
-            if (volleyError != null) {
-                AppLog.e(AppLog.T.STATS, "Error while reading Stats details "
-                        + volleyError.getMessage(), volleyError);
-            }
-            if (mActivityRef.get() == null || mActivityRef.get().isFinishing()) {
-                return;
-            }
-            if (!mFragment.isAdded()) {
-                return;
-            }
-
-            resetModelVariables();
-            mFragment.showHideNoResultsUI(true);
-
-            ToastUtils.showToast(mActivityRef.get(),
-                    mActivityRef.get().getString(R.string.error_refresh_stats),
-                    ToastUtils.Duration.LONG);
-            mIsUpdatingStats = false;
-            mSwipeToRefreshHelper.setRefreshing(false);
-        }
-    }
-
-    private void resetModelVariables() {
-        mRestResponse = null;
-    }
-
-    private void notifySectionUpdated(StatsService.StatsEndpointsEnum sectionName, Serializable data) {
-        Intent intent = new Intent()
-                .setAction(StatsService.ACTION_STATS_SECTION_UPDATED)
-                .putExtra(StatsService.EXTRA_ENDPOINT_NAME, sectionName)
-                .putExtra(StatsService.EXTRA_ENDPOINT_DATA, data);
-        LocalBroadcastManager.getInstance(WordPress.getContext()).sendBroadcast(intent);
-    }
-
-    // Fragments call these two methods below to access the current timeframe/date selected by the user.
-    @Override
-    public String getCurrentDate() {
-        return mDate;
-    }
-
-    @Override
-    public StatsTimeframe getCurrentTimeFrame() {
-        return mTimeframe;
     }
 }

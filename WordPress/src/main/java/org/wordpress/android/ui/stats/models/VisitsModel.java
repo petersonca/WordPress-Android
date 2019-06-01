@@ -2,25 +2,24 @@ package org.wordpress.android.ui.stats.models;
 
 import android.text.TextUtils;
 
+import org.apache.commons.text.StringEscapeUtils;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.util.AppLog;
-import org.wordpress.android.util.StringUtils;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
-public class VisitsModel implements Serializable {
+public class VisitsModel extends BaseStatsModel {
     private String mFields; // Holds a JSON Object
     private String mUnit;
     private String mDate;
-    private String mBlogID;
+    private long mBlogID;
     private List<VisitModel> mVisits;
 
-    public VisitsModel(String blogID, JSONObject response) throws JSONException {
+    public VisitsModel(long blogID, JSONObject response) throws JSONException {
         this.setBlogID(blogID);
         this.setDate(response.getString("date"));
         this.setUnit(response.getString("unit"));
@@ -35,13 +34,13 @@ public class VisitsModel implements Serializable {
         }
 
         if (dataJSON == null || dataJSON.length() == 0) {
-            mVisits =  new ArrayList<>(0);
+            mVisits = new ArrayList<>(0);
         } else {
             // Read the position/index of each field in the response
             HashMap<String, Integer> columnsMapping = new HashMap<>(6);
             final JSONArray fieldsJSON = getFieldsJSON();
             if (fieldsJSON == null || fieldsJSON.length() == 0) {
-                mVisits =  new ArrayList<>(0);
+                mVisits = new ArrayList<>(0);
             } else {
                 try {
                     for (int i = 0; i < fieldsJSON.length(); i++) {
@@ -49,8 +48,8 @@ public class VisitsModel implements Serializable {
                         columnsMapping.put(field, i);
                     }
                 } catch (JSONException e) {
-                    AppLog.e(AppLog.T.STATS, "Cannot read the parameter fields from the JSON response." +
-                            "Response: " + response.toString(), e);
+                    AppLog.e(AppLog.T.STATS, "Cannot read the parameter fields from the JSON response."
+                                             + "Response: " + response.toString(), e);
                     mVisits = new ArrayList<>(0);
                 }
             }
@@ -68,6 +67,7 @@ public class VisitsModel implements Serializable {
                 try {
                     JSONArray currentDayData = dataJSON.getJSONArray(i);
                     VisitModel currentVisitModel = new VisitModel();
+                    currentVisitModel.setBlogID(getBlogID());
                     currentVisitModel.setPeriod(currentDayData.getString(periodColumnIndex));
                     currentVisitModel.setViews(currentDayData.getInt(viewsColumnIndex));
                     currentVisitModel.setVisitors(currentDayData.getInt(visitorsColumnIndex));
@@ -76,7 +76,7 @@ public class VisitsModel implements Serializable {
                     mVisits.add(currentVisitModel);
                 } catch (JSONException e) {
                     AppLog.e(AppLog.T.STATS, "Cannot read the Visit item at index " + i
-                            + " Response: " + response.toString(), e);
+                                             + " Response: " + response.toString(), e);
                 }
             }
         }
@@ -86,11 +86,11 @@ public class VisitsModel implements Serializable {
         return mVisits;
     }
 
-    public String getBlogID() {
+    public long getBlogID() {
         return mBlogID;
     }
 
-    public void setBlogID(String blogID) {
+    private void setBlogID(long blogID) {
         this.mBlogID = blogID;
     }
 
@@ -98,7 +98,7 @@ public class VisitsModel implements Serializable {
         return mDate;
     }
 
-    public void setDate(String date) {
+    private void setDate(String date) {
         this.mDate = date;
     }
 
@@ -106,14 +106,14 @@ public class VisitsModel implements Serializable {
         return mUnit;
     }
 
-    public void setUnit(String unit) {
+    private void setUnit(String unit) {
         this.mUnit = unit;
     }
 
     private JSONArray getFieldsJSON() {
         JSONArray jArray;
         try {
-            String categories = StringUtils.unescapeHTML(this.getFields() != null ? this.getFields() : "[]");
+            String categories = StringEscapeUtils.unescapeHtml4(this.getFields() != null ? this.getFields() : "[]");
             if (TextUtils.isEmpty(categories)) {
                 jArray = new JSONArray();
             } else {

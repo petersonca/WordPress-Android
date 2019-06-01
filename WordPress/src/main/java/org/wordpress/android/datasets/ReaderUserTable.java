@@ -7,8 +7,7 @@ import android.database.sqlite.SQLiteStatement;
 import org.wordpress.android.models.ReaderUser;
 import org.wordpress.android.models.ReaderUserIdList;
 import org.wordpress.android.models.ReaderUserList;
-import org.wordpress.android.ui.prefs.AppPrefs;
-import org.wordpress.android.util.PhotonUtils;
+import org.wordpress.android.util.GravatarUtils;
 import org.wordpress.android.util.SqlUtils;
 
 import java.util.ArrayList;
@@ -19,13 +18,13 @@ import java.util.ArrayList;
 public class ReaderUserTable {
     protected static void createTables(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE tbl_users ("
-                + "	user_id	        INTEGER PRIMARY KEY,"
-                + " blog_id         INTEGER DEFAULT 0,"
-                + "	user_name	    TEXT,"
-                + "	display_name	TEXT COLLATE NOCASE,"
-                + " url             TEXT,"
-                + " profile_url     TEXT,"
-                + " avatar_url      TEXT)");
+                   + " user_id INTEGER PRIMARY KEY,"
+                   + " blog_id INTEGER DEFAULT 0,"
+                   + " user_name TEXT,"
+                   + " display_name TEXT COLLATE NOCASE,"
+                   + " url TEXT,"
+                   + " profile_url TEXT,"
+                   + " avatar_url TEXT)");
     }
 
     protected static void dropTables(SQLiteDatabase db) {
@@ -33,8 +32,9 @@ public class ReaderUserTable {
     }
 
     public static void addOrUpdateUser(ReaderUser user) {
-        if (user==null)
+        if (user == null) {
             return;
+        }
 
         ReaderUserList users = new ReaderUserList();
         users.add(user);
@@ -42,25 +42,27 @@ public class ReaderUserTable {
     }
 
     private static final String COLUMN_NAMES =
-          " user_id,"       // 1
-        + " blog_id,"       // 2
-        + " user_name,"     // 3
-        + " display_name,"  // 4
-        + " url,"           // 5
-        + " profile_url,"   // 6
-        + " avatar_url";    // 7
+            " user_id," // 1
+            + " blog_id," // 2
+            + " user_name," // 3
+            + " display_name," // 4
+            + " url," // 5
+            + " profile_url," // 6
+            + " avatar_url"; // 7
 
     public static void addOrUpdateUsers(ReaderUserList users) {
-        if (users==null || users.size()==0)
+        if (users == null || users.size() == 0) {
             return;
+        }
 
         SQLiteDatabase db = ReaderDatabase.getWritableDb();
         db.beginTransaction();
-        SQLiteStatement stmt = db.compileStatement("INSERT OR REPLACE INTO tbl_users (" + COLUMN_NAMES + ") VALUES (?1,?2,?3,?4,?5,?6,?7)");
+        SQLiteStatement stmt = db.compileStatement(
+                "INSERT OR REPLACE INTO tbl_users (" + COLUMN_NAMES + ") VALUES (?1,?2,?3,?4,?5,?6,?7)");
         try {
-            for (ReaderUser user: users) {
-                stmt.bindLong  (1, user.userId);
-                stmt.bindLong  (2, user.blogId);
+            for (ReaderUser user : users) {
+                stmt.bindLong(1, user.userId);
+                stmt.bindLong(2, user.blogId);
                 stmt.bindString(3, user.getUserName());
                 stmt.bindString(4, user.getDisplayName());
                 stmt.bindString(5, user.getUrl());
@@ -70,7 +72,6 @@ public class ReaderUserTable {
             }
 
             db.setTransactionSuccessful();
-
         } finally {
             db.endTransaction();
             SqlUtils.closeStatement(stmt);
@@ -80,31 +81,34 @@ public class ReaderUserTable {
     /*
      * returns avatar urls for the passed user ids - used by post detail to show avatars for liking users
      */
-    public static ArrayList<String> getAvatarUrls(ReaderUserIdList userIds, int max, int avatarSz) {
+    public static ArrayList<String> getAvatarUrls(ReaderUserIdList userIds, int max, int avatarSz, long wpComUserId) {
         ArrayList<String> avatars = new ArrayList<String>();
-        if (userIds==null || userIds.size()==0)
+        if (userIds == null || userIds.size() == 0) {
             return avatars;
+        }
 
         StringBuilder sb = new StringBuilder("SELECT user_id, avatar_url FROM tbl_users WHERE user_id IN (");
 
         // make sure current user's avatar is returned if the passed list contains them - this is
         // important since it may not otherwise be returned when a "max" is passed, and we want
         // the current user to appear first in post detail when they like a post
-        long currentUserId = AppPrefs.getCurrentUserId();
-        boolean containsCurrentUser = userIds.contains(currentUserId);
-        if (containsCurrentUser)
-            sb.append(currentUserId);
+        boolean containsCurrentUser = userIds.contains(wpComUserId);
+        if (containsCurrentUser) {
+            sb.append(wpComUserId);
+        }
 
         int numAdded = (containsCurrentUser ? 1 : 0);
-        for (Long id: userIds) {
+        for (Long id : userIds) {
             // skip current user since we added them already
-            if (id!=currentUserId) {
-                if (numAdded > 0)
+            if (id != wpComUserId) {
+                if (numAdded > 0) {
                     sb.append(",");
+                }
                 sb.append(id);
                 numAdded++;
-                if (max > 0 && numAdded >= max)
+                if (max > 0 && numAdded >= max) {
                     break;
+                }
             }
         }
         sb.append(")");
@@ -114,9 +118,9 @@ public class ReaderUserTable {
             if (c.moveToFirst()) {
                 do {
                     long userId = c.getLong(0);
-                    String url = PhotonUtils.fixAvatar(c.getString(1), avatarSz);
+                    String url = GravatarUtils.fixGravatarUrl(c.getString(1), avatarSz);
                     // add current user to the top
-                    if (userId==currentUserId) {
+                    if (userId == wpComUserId) {
                         avatars.add(0, url);
                     } else {
                         avatars.add(url);
@@ -129,16 +133,17 @@ public class ReaderUserTable {
         }
     }
 
-    public static ReaderUser getCurrentUser() {
-        return getUser(AppPrefs.getCurrentUserId());
+    public static ReaderUser getCurrentUser(final long wpComUserId) {
+        return getUser(wpComUserId);
     }
 
     private static ReaderUser getUser(long userId) {
-        String args[] = {Long.toString(userId)};
+        String[] args = {Long.toString(userId)};
         Cursor c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_users WHERE user_id=?", args);
         try {
-            if (!c.moveToFirst())
+            if (!c.moveToFirst()) {
                 return null;
+            }
             return getUserFromCursor(c);
         } finally {
             SqlUtils.closeCursor(c);
@@ -146,13 +151,16 @@ public class ReaderUserTable {
     }
 
     private static String getAvatarForUser(long userId) {
-        String args[] = {Long.toString(userId)};
-        return SqlUtils.stringForQuery(ReaderDatabase.getReadableDb(), "SELECT avatar_url FROM tbl_users WHERE user_id=?", args);
+        String[] args = {Long.toString(userId)};
+        return SqlUtils
+                .stringForQuery(ReaderDatabase.getReadableDb(), "SELECT avatar_url FROM tbl_users WHERE user_id=?",
+                                args);
     }
 
     public static ReaderUserList getUsersWhoLikePost(long blogId, long postId, int max) {
         String[] args = {Long.toString(blogId), Long.toString(postId)};
-        String sql = "SELECT * from tbl_users WHERE user_id IN (SELECT user_id FROM tbl_post_likes WHERE blog_id=? AND post_id=?) ORDER BY display_name";
+        String sql = "SELECT * from tbl_users WHERE user_id IN "
+                     + "(SELECT user_id FROM tbl_post_likes WHERE blog_id=? AND post_id=?) ORDER BY display_name";
         if (max > 0) {
             sql += " LIMIT " + Integer.toString(max);
         }
@@ -173,10 +181,10 @@ public class ReaderUserTable {
 
     public static ReaderUserList getUsersWhoLikeComment(long blogId, long commentId, int max) {
         String[] args = {Long.toString(blogId),
-                         Long.toString(commentId)};
+                Long.toString(commentId)};
         String sql = "SELECT * from tbl_users WHERE user_id IN"
-                   + " (SELECT user_id FROM tbl_comment_likes WHERE blog_id=? AND comment_id=?)"
-                   + " ORDER BY display_name";
+                     + " (SELECT user_id FROM tbl_comment_likes WHERE blog_id=? AND comment_id=?)"
+                     + " ORDER BY display_name";
         if (max > 0) {
             sql += " LIMIT " + Integer.toString(max);
         }

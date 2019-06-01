@@ -1,31 +1,36 @@
 package org.wordpress.android.ui.notifications.blocks;
 
+import android.graphics.drawable.Drawable;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.text.Spannable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.MediaController;
 import android.widget.VideoView;
 
-import com.android.volley.VolleyError;
-import com.android.volley.toolbox.ImageLoader;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import org.jetbrains.annotations.Nullable;
 import org.wordpress.android.R;
-import org.wordpress.android.WordPress;
-import org.wordpress.android.ui.notifications.utils.NotificationsUtils;
+import org.wordpress.android.fluxc.tools.FormattableContent;
+import org.wordpress.android.fluxc.tools.FormattableMedia;
+import org.wordpress.android.ui.notifications.utils.NotificationsUtilsWrapper;
+import org.wordpress.android.util.AccessibilityUtils;
+import org.wordpress.android.util.AppLog;
+import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.DisplayUtils;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.FormattableContentUtilsKt;
+import org.wordpress.android.util.StringUtils;
+import org.wordpress.android.util.image.ImageManager;
+import org.wordpress.android.util.image.ImageType;
 import org.wordpress.android.widgets.WPTextView;
 
 /**
@@ -33,26 +38,32 @@ import org.wordpress.android.widgets.WPTextView;
  * This basic block can support a media item (image/video) and/or text.
  */
 public class NoteBlock {
-
-    private static final String PROPERTY_MEDIA_TYPE = "type";
-    private static final String PROPERTY_MEDIA_URL = "url";
-
-    private final JSONObject mNoteData;
+    private final FormattableContent mNoteData;
     private final OnNoteBlockTextClickListener mOnNoteBlockTextClickListener;
-    private JSONObject mMediaItem;
+    protected final ImageManager mImageManager;
+    protected final NotificationsUtilsWrapper mNotificationsUtilsWrapper;
     private boolean mIsBadge;
+    private boolean mIsPingback;
     private boolean mHasAnimatedBadge;
     private int mBackgroundColor;
 
     public interface OnNoteBlockTextClickListener {
-        public void onNoteBlockTextClicked(NoteBlockClickableSpan clickedSpan);
-        public void showDetailForNoteIds();
-        public void showSitePreview(long siteId, String siteUrl);
+        void onNoteBlockTextClicked(NoteBlockClickableSpan clickedSpan);
+
+        void showDetailForNoteIds();
+
+        void showReaderPostComments();
+
+        void showSitePreview(long siteId, String siteUrl);
     }
 
-    public NoteBlock(JSONObject noteObject, OnNoteBlockTextClickListener onNoteBlockTextClickListener) {
+    public NoteBlock(FormattableContent noteObject, ImageManager imageManager,
+                     NotificationsUtilsWrapper notificationsUtilsWrapper,
+                     OnNoteBlockTextClickListener onNoteBlockTextClickListener) {
         mNoteData = noteObject;
         mOnNoteBlockTextClickListener = onNoteBlockTextClickListener;
+        mImageManager = imageManager;
+        mNotificationsUtilsWrapper = notificationsUtilsWrapper;
     }
 
     OnNoteBlockTextClickListener getOnNoteBlockTextClickListener() {
@@ -63,32 +74,37 @@ public class NoteBlock {
         return BlockType.BASIC;
     }
 
-    JSONObject getNoteData() {
+    FormattableContent getNoteData() {
         return mNoteData;
     }
 
     Spannable getNoteText() {
-        return NotificationsUtils.getSpannableContentFromIndices(mNoteData, null, mOnNoteBlockTextClickListener);
+        return mNotificationsUtilsWrapper.getSpannableContentForRanges(mNoteData, null,
+                mOnNoteBlockTextClickListener, false);
     }
 
-    public String getMetaHomeTitle() {
-        return JSONUtil.queryJSON(mNoteData, "meta.titles.home", "");
+    String getMetaHomeTitle() {
+        return FormattableContentUtilsKt.getMetaTitlesHomeOrEmpty(mNoteData);
     }
 
-    public long getMetaSiteId() {
-        return JSONUtil.queryJSON(mNoteData, "meta.ids.site", -1);
+    long getMetaSiteId() {
+        return FormattableContentUtilsKt.getMetaIdsSiteIdOrZero(mNoteData);
     }
 
     public String getMetaSiteUrl() {
-        return JSONUtil.queryJSON(mNoteData, "meta.links.home", "");
+        return FormattableContentUtilsKt.getMetaLinksHomeOrEmpty(mNoteData);
     }
 
-    JSONObject getNoteMediaItem() {
-        if (mMediaItem == null) {
-            mMediaItem = JSONUtil.queryJSON(mNoteData, "media[0]", new JSONObject());
-        }
+    private boolean isPingBack() {
+        return mIsPingback;
+    }
 
-        return mMediaItem;
+    public void setIsPingback() {
+        mIsPingback = true;
+    }
+
+    FormattableMedia getNoteMediaItem() {
+        return FormattableContentUtilsKt.getMediaOrNull(mNoteData, 0);
     }
 
     public void setIsBadge() {
@@ -104,88 +120,122 @@ public class NoteBlock {
     }
 
     private boolean hasMediaArray() {
-        return mNoteData.has("media");
+        return mNoteData.getMedia() != null && !mNoteData.getMedia().isEmpty();
     }
 
     boolean hasImageMediaItem() {
-        String mediaType = getNoteMediaItem().optString(PROPERTY_MEDIA_TYPE, "");
-        return hasMediaArray() &&
-                (mediaType.startsWith("image") || mediaType.equals("badge")) &&
-                getNoteMediaItem().has(PROPERTY_MEDIA_URL);
+        return hasMediaArray()
+               && getNoteMediaItem() != null
+               && !TextUtils.isEmpty(getNoteMediaItem().getType())
+               && (getNoteMediaItem().getType().startsWith("image") || getNoteMediaItem().getType().equals("badge"))
+               && !TextUtils.isEmpty(getNoteMediaItem().getUrl());
     }
 
-    boolean hasVideoMediaItem() {
-        return hasMediaArray() &&
-                getNoteMediaItem().optString(PROPERTY_MEDIA_TYPE, "").startsWith("video") &&
-                getNoteMediaItem().has(PROPERTY_MEDIA_URL);
+    private boolean hasVideoMediaItem() {
+        return hasMediaArray()
+               && getNoteMediaItem() != null
+               && !TextUtils.isEmpty(getNoteMediaItem().getType())
+               && getNoteMediaItem().getType().startsWith("video")
+               && !TextUtils.isEmpty(getNoteMediaItem().getUrl());
     }
 
     public boolean containsBadgeMediaType() {
-        try {
-            JSONArray mediaArray = mNoteData.getJSONArray("media");
-            for (int i=0; i < mediaArray.length(); i++) {
-                JSONObject mediaObject = mediaArray.getJSONObject(i);
-                if (mediaObject.optString(PROPERTY_MEDIA_TYPE, "").equals("badge")) {
+        if (mNoteData.getMedia() != null) {
+            for (FormattableMedia mediaObject : mNoteData.getMedia()) {
+                if ("badge".equals(mediaObject.getType())) {
                     return true;
                 }
             }
-        } catch (JSONException e) {
-            return false;
         }
-
         return false;
     }
 
     public View configureView(final View view) {
-        final BasicNoteBlockHolder noteBlockHolder = (BasicNoteBlockHolder)view.getTag();
+        final BasicNoteBlockHolder noteBlockHolder = (BasicNoteBlockHolder) view.getTag();
 
         // Note image
         if (hasImageMediaItem()) {
-            // Request image, and animate it when loaded
             noteBlockHolder.getImageView().setVisibility(View.VISIBLE);
-            WordPress.imageLoader.get(getNoteMediaItem().optString("url", ""), new ImageLoader.ImageListener() {
-                @Override
-                public void onResponse(ImageLoader.ImageContainer response, boolean isImmediate) {
-                    if (!mHasAnimatedBadge && response.getBitmap() != null && view.getContext() != null) {
-                        mHasAnimatedBadge = true;
-                        noteBlockHolder.getImageView().setImageBitmap(response.getBitmap());
-                        Animation pop = AnimationUtils.loadAnimation(view.getContext(), R.anim.pop);
-                        noteBlockHolder.getImageView().startAnimation(pop);
-                        noteBlockHolder.getImageView().setVisibility(View.VISIBLE);
-                    }
-                }
+            // Request image, and animate it when loaded
+            mImageManager
+                    .loadWithResultListener(noteBlockHolder.getImageView(), ImageType.IMAGE,
+                            StringUtils.notNullStr(getNoteMediaItem().getUrl()), null,
+                            new ImageManager.RequestListener<Drawable>() {
+                                @Override
+                                public void onLoadFailed(@Nullable Exception e) {
+                                    if (e != null) {
+                                        AppLog.e(T.NOTIFS, e);
+                                    }
+                                    noteBlockHolder.hideImageView();
+                                }
 
-                @Override
-                public void onErrorResponse(VolleyError volleyError) {
-                    noteBlockHolder.hideImageView();
-                }
-            });
+                                @Override
+                                public void onResourceReady(@Nullable Drawable resource) {
+                                    if (!mHasAnimatedBadge && view.getContext() != null && resource != null) {
+                                        mHasAnimatedBadge = true;
+                                        Animation pop = AnimationUtils.loadAnimation(view.getContext(), R.anim.pop);
+                                        noteBlockHolder.getImageView().startAnimation(pop);
+                                    }
+                                }
+                            });
+
+            if (mIsBadge) {
+                noteBlockHolder.getImageView().setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            }
         } else {
+            mImageManager.cancelRequestAndClearImageView(noteBlockHolder.getImageView());
             noteBlockHolder.hideImageView();
         }
 
         // Note video
         if (hasVideoMediaItem()) {
-            noteBlockHolder.getVideoView().setVideoURI(Uri.parse(getNoteMediaItem().optString("url", "")));
+            noteBlockHolder.getVideoView().setVideoURI(Uri.parse(StringUtils.notNullStr(getNoteMediaItem().getUrl())));
             noteBlockHolder.getVideoView().setVisibility(View.VISIBLE);
         } else {
             noteBlockHolder.hideVideoView();
         }
 
         // Note text
-        if (!TextUtils.isEmpty(getNoteText())) {
-            if (mIsBadge) {
-                noteBlockHolder.getTextView().setGravity(Gravity.CENTER_HORIZONTAL);
-                noteBlockHolder.getTextView().setPadding(0, DisplayUtils.dpToPx(view.getContext(), 8), 0, 0);
+        Spannable noteText = getNoteText();
+        if (!TextUtils.isEmpty(noteText)) {
+            if (isPingBack()) {
+                noteBlockHolder.getTextView().setVisibility(View.GONE);
+                noteBlockHolder.getDivider().setVisibility(View.VISIBLE);
+                noteBlockHolder.getButton().setVisibility(View.VISIBLE);
+                noteBlockHolder.getButton().setText(noteText.toString());
+                noteBlockHolder.getButton().setOnClickListener(new OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        if (getOnNoteBlockTextClickListener() != null) {
+                            getOnNoteBlockTextClickListener().showSitePreview(0, getMetaSiteUrl());
+                        }
+                    }
+                });
             } else {
-                noteBlockHolder.getTextView().setGravity(Gravity.NO_GRAVITY);
-                noteBlockHolder.getTextView().setPadding(0, 0, 0, 0);
+                if (mIsBadge) {
+                    LinearLayout.LayoutParams params =
+                            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                                    LinearLayout.LayoutParams.MATCH_PARENT);
+                    params.gravity = Gravity.CENTER_HORIZONTAL;
+                    noteBlockHolder.getTextView().setLayoutParams(params);
+                    noteBlockHolder.getTextView().setGravity(Gravity.CENTER_HORIZONTAL);
+                    noteBlockHolder.getTextView().setPadding(0, DisplayUtils.dpToPx(view.getContext(), 8), 0, 0);
+
+                    if (AccessibilityUtils.isAccessibilityEnabled(noteBlockHolder.getTextView().getContext())) {
+                        noteBlockHolder.getTextView().setClickable(false);
+                        noteBlockHolder.getTextView().setLongClickable(false);
+                    }
+                } else {
+                    noteBlockHolder.getTextView().setGravity(Gravity.NO_GRAVITY);
+                    noteBlockHolder.getTextView().setPadding(0, 0, 0, 0);
+                }
+                noteBlockHolder.getTextView().setText(noteText);
+                noteBlockHolder.getTextView().setVisibility(View.VISIBLE);
             }
-            noteBlockHolder.getTextView().setText(getNoteText());
-            noteBlockHolder.getTextView().setVisibility(View.VISIBLE);
         } else {
             noteBlockHolder.getTextView().setVisibility(View.GONE);
         }
+
 
         view.setBackgroundColor(mBackgroundColor);
 
@@ -199,18 +249,30 @@ public class NoteBlock {
     static class BasicNoteBlockHolder {
         private final LinearLayout mRootLayout;
         private final WPTextView mTextView;
+        private final Button mButton;
+        private final View mDivider;
 
         private ImageView mImageView;
         private VideoView mVideoView;
 
         BasicNoteBlockHolder(View view) {
-            mRootLayout = (LinearLayout)view;
-            mTextView = (WPTextView) view.findViewById(R.id.note_text);
+            mRootLayout = (LinearLayout) view;
+            mTextView = view.findViewById(R.id.note_text);
             mTextView.setMovementMethod(new NoteBlockLinkMovementMethod());
+            mButton = view.findViewById(R.id.note_button);
+            mDivider = view.findViewById(R.id.divider_view);
         }
 
         public WPTextView getTextView() {
             return mTextView;
+        }
+
+        public Button getButton() {
+            return mButton;
+        }
+
+        public View getDivider() {
+            return mDivider;
         }
 
         public ImageView getImageView() {
@@ -231,8 +293,9 @@ public class NoteBlock {
         public VideoView getVideoView() {
             if (mVideoView == null) {
                 mVideoView = new VideoView(mRootLayout.getContext());
-                FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                        DisplayUtils.dpToPx(mRootLayout.getContext(), 220));
+                FrameLayout.LayoutParams layoutParams =
+                        new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                                DisplayUtils.dpToPx(mRootLayout.getContext(), 220));
                 mVideoView.setLayoutParams(layoutParams);
                 mRootLayout.addView(mVideoView, 0);
 
@@ -243,7 +306,6 @@ public class NoteBlock {
                 mVideoView.setMediaController(mediaController);
                 mediaController.requestFocus();
                 mVideoView.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
-
                     @Override
                     public void onPrepared(MediaPlayer mp) {
                         // Show the media controls when the video is ready to be played.

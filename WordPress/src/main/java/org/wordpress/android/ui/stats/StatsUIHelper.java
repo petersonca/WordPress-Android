@@ -2,8 +2,10 @@ package org.wordpress.android.ui.stats;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Point;
+import android.support.v4.view.ViewCompat;
 import android.text.Spannable;
 import android.text.style.URLSpan;
 import android.util.SparseBooleanArray;
@@ -21,12 +23,16 @@ import android.widget.LinearLayout;
 import android.widget.ListAdapter;
 
 import org.wordpress.android.R;
+import org.wordpress.android.WordPress;
+import org.wordpress.android.util.ColorUtils;
+import org.wordpress.android.util.DisplayUtils;
+import org.wordpress.android.util.RtlUtils;
 
-public class StatsUIHelper {
+class StatsUIHelper {
     // Max number of rows to show in a stats fragment
-    public static final int STATS_GROUP_MAX_ITEMS = 10;
-    public static final int STATS_CHILD_MAX_ITEMS = 50;
-    public static final int ANIM_DURATION = 150;
+    private static final int STATS_GROUP_MAX_ITEMS = 10;
+    private static final int STATS_CHILD_MAX_ITEMS = 50;
+    private static final int ANIM_DURATION = 150;
 
     // Used for tablet UI
     private static final int TABLET_720DP = 720;
@@ -40,11 +46,12 @@ public class StatsUIHelper {
     }
 
     // Load more bars for 720DP tablets
-    public static boolean shouldLoadMoreBars() {
+    private static boolean shouldLoadMoreBars() {
         return (StatsUtils.getSmallestWidthDP() >= TABLET_720DP);
     }
 
-    public static void reloadLinearLayout(Context ctx, ListAdapter adapter, LinearLayout linearLayout, int maxNumberOfItemsToshow) {
+    public static void reloadLinearLayout(Context ctx, ListAdapter adapter, LinearLayout linearLayout,
+                                          int maxNumberOfItemsToshow) {
         if (ctx == null || linearLayout == null || adapter == null) {
             return;
         }
@@ -85,10 +92,9 @@ public class StatsUIHelper {
     }
 
     /**
-     *
      * Padding information are reset when changing the background Drawable on a View.
      * The reason why setting an image resets the padding is because 9-patch images can encode padding.
-     *
+     * <p>
      * See http://stackoverflow.com/a/10469121 and
      * http://www.mail-archive.com/android-developers@googlegroups.com/msg09595.html
      *
@@ -96,10 +102,10 @@ public class StatsUIHelper {
      * @param backgroundResId The resource ID
      */
     private static void setViewBackgroundWithoutResettingPadding(final View v, final int backgroundResId) {
-        final int paddingBottom = v.getPaddingBottom(), paddingLeft = v.getPaddingLeft();
-        final int paddingRight = v.getPaddingRight(), paddingTop = v.getPaddingTop();
+        final int paddingBottom = v.getPaddingBottom(), paddingLeft = ViewCompat.getPaddingStart(v);
+        final int paddingRight = ViewCompat.getPaddingEnd(v), paddingTop = v.getPaddingTop();
         v.setBackgroundResource(backgroundResId);
-        v.setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom);
+        ViewCompat.setPaddingRelative(v, paddingLeft, paddingTop, paddingRight, paddingBottom);
     }
 
     public static void reloadLinearLayout(Context ctx, ListAdapter adapter, LinearLayout linearLayout) {
@@ -157,10 +163,17 @@ public class StatsUIHelper {
                 mLinearLayout.addView(groupView);
             }
 
+            // groupView is recycled, we need to reset it to the original state.
+            ViewGroup childContainer = groupView.findViewById(R.id.layout_child_container);
+            if (childContainer != null) {
+                childContainer.setVisibility(View.GONE);
+            }
             // Remove any other prev animations set on the chevron
-            final ImageView chevron = (ImageView) groupView.findViewById(R.id.stats_list_cell_chevron);
+            final ImageView chevron = groupView.findViewById(R.id.stats_list_cell_chevron);
             if (chevron != null) {
                 chevron.clearAnimation();
+                ColorUtils.INSTANCE.setImageResourceWithTint(chevron, R.drawable.ic_chevron_right_white_24dp,
+                        R.color.primary_500);
             }
 
             // add children if this group is expanded
@@ -191,12 +204,12 @@ public class StatsUIHelper {
     /*
      * interpolator for all expand/collapse animations
     */
-    public static Interpolator getInterpolator() {
+    private static Interpolator getInterpolator() {
         return new AccelerateInterpolator();
     }
 
-    public static void hideChildViews(View groupView, int groupPosition,  boolean animate) {
-        final ViewGroup childContainer = (ViewGroup) groupView.findViewById(R.id.layout_child_container);
+    private static void hideChildViews(View groupView, int groupPosition, boolean animate) {
+        final ViewGroup childContainer = groupView.findViewById(R.id.layout_child_container);
         if (childContainer == null) {
             return;
         }
@@ -208,13 +221,17 @@ public class StatsUIHelper {
                 expand.setInterpolator(getInterpolator());
                 expand.setAnimationListener(new Animation.AnimationListener() {
                     @Override
-                    public void onAnimationStart(Animation animation) { }
+                    public void onAnimationStart(Animation animation) {
+                    }
+
                     @Override
                     public void onAnimationEnd(Animation animation) {
                         childContainer.setVisibility(View.GONE);
                     }
+
                     @Override
-                    public void onAnimationRepeat(Animation animation) { }
+                    public void onAnimationRepeat(Animation animation) {
+                    }
                 });
                 childContainer.startAnimation(expand);
             } else {
@@ -224,27 +241,36 @@ public class StatsUIHelper {
         StatsUIHelper.setGroupChevron(false, groupView, groupPosition, animate);
     }
 
-    /*
+    /**
      * shows the correct up/down chevron for the passed group
      */
-    public static void setGroupChevron(final boolean isGroupExpanded, View groupView, int groupPosition, boolean animate) {
-        final ImageView chevron = (ImageView) groupView.findViewById(R.id.stats_list_cell_chevron);
+    private static void setGroupChevron(final boolean isGroupExpanded, View groupView, int groupPosition,
+                                        boolean animate) {
+        final ImageView chevron = groupView.findViewById(R.id.stats_list_cell_chevron);
         if (chevron == null) {
             return;
         }
+
+        Context context = groupView.getContext();
+
         if (isGroupExpanded) {
+            chevron.setContentDescription(context.getString(R.string.stats_list_cell_chevron_collapse_desc));
             // change the background of the parent
             setViewBackgroundWithoutResettingPadding(groupView, R.drawable.stats_list_item_expanded_background);
         } else {
-            setViewBackgroundWithoutResettingPadding(groupView, groupPosition == 0 ? 0 : R.drawable.stats_list_item_background);
+            chevron.setContentDescription(context.getString(R.string.stats_list_cell_chevron_expand_desc));
+            setViewBackgroundWithoutResettingPadding(groupView, groupPosition == 0 ? 0
+                    : R.drawable.stats_list_item_background);
         }
 
         chevron.clearAnimation(); // Remove any other prev animations set on the chevron
+
         if (animate) {
             // make sure we start with the correct chevron for the prior state before animating it
-            chevron.setImageResource(isGroupExpanded ? R.drawable.stats_chevron_right : R.drawable.stats_chevron_down);
+            chevron.setImageResource(isGroupExpanded ? R.drawable.ic_chevron_right_white_24dp
+                    : R.drawable.ic_chevron_down_white_24dp);
             float start = (isGroupExpanded ? 0.0f : 0.0f);
-            float end = (isGroupExpanded ? 90.0f : -90.0f);
+            float end = (isGroupExpanded ? 90.0f : -90.0f) * (RtlUtils.isRtl(context) ? -1 : 1);
             Animation rotate = new RotateAnimation(start, end, Animation.RELATIVE_TO_SELF, 0.5f,
                     Animation.RELATIVE_TO_SELF, 0.5f);
             rotate.setDuration(ANIM_DURATION);
@@ -252,18 +278,21 @@ public class StatsUIHelper {
             rotate.setFillAfter(true);
             chevron.startAnimation(rotate);
         } else {
-            chevron.setImageResource(isGroupExpanded ? R.drawable.stats_chevron_down : R.drawable.stats_chevron_right);
+            chevron.setImageResource(isGroupExpanded ? R.drawable.ic_chevron_down_white_24dp
+                    : R.drawable.ic_chevron_right_white_24dp);
         }
+
+        chevron.setImageTintList(ColorStateList.valueOf(context.getResources().getColor(R.color.primary_500)));
     }
 
-    public static void showChildViews(ExpandableListAdapter mAdapter, LinearLayout mLinearLayout,
-                                      int groupPosition, View groupView, boolean animate) {
+    private static void showChildViews(ExpandableListAdapter mAdapter, LinearLayout mLinearLayout,
+                                       int groupPosition, View groupView, boolean animate) {
         int childCount = Math.min(mAdapter.getChildrenCount(groupPosition), STATS_CHILD_MAX_ITEMS);
         if (childCount == 0) {
             return;
         }
 
-        final ViewGroup childContainer = (ViewGroup) groupView.findViewById(R.id.layout_child_container);
+        final ViewGroup childContainer = groupView.findViewById(R.id.layout_child_container);
         if (childContainer == null) {
             return;
         }
@@ -310,12 +339,12 @@ public class StatsUIHelper {
      * URLSpanNoUnderline objects.
      *
      * @param pText A Spannable object. For example, a TextView casted as
-     *               Spannable.
+     * Spannable.
      */
     public static void removeUnderlines(Spannable pText) {
         URLSpan[] spans = pText.getSpans(0, pText.length(), URLSpan.class);
 
-        for(URLSpan span:spans) {
+        for (URLSpan span : spans) {
             int start = pText.getSpanStart(span);
             int end = pText.getSpanEnd(span);
             pText.removeSpan(span);
@@ -325,7 +354,9 @@ public class StatsUIHelper {
     }
 
     public static int getNumOfBarsToShow() {
-        if(shouldLoadMoreBars()) {
+        if (StatsUtils.getSmallestWidthDP() >= TABLET_720DP && DisplayUtils.isLandscape(WordPress.getContext())) {
+            return 15;
+        } else if (StatsUtils.getSmallestWidthDP() >= TABLET_600DP) {
             return 10;
         } else {
             return 7;

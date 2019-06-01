@@ -1,23 +1,72 @@
 package org.wordpress.android.ui.stats;
 
 import android.content.Context;
+import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseExpandableListAdapter;
 
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
 import org.wordpress.android.ui.stats.models.TagModel;
 import org.wordpress.android.ui.stats.models.TagsContainerModel;
 import org.wordpress.android.ui.stats.models.TagsModel;
-import org.wordpress.android.ui.stats.service.StatsService;
+import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.FormatUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
     public static final String TAG = StatsTagsAndCategoriesFragment.class.getSimpleName();
+
+    private TagsContainerModel mTagsContainer;
+
+    @Override
+    protected boolean hasDataAvailable() {
+        return mTagsContainer != null;
+    }
+
+    @Override
+    protected void saveStatsData(Bundle outState) {
+        if (mTagsContainer != null) {
+            outState.putSerializable(ARG_REST_RESPONSE, mTagsContainer);
+        }
+    }
+
+    @Override
+    protected void restoreStatsData(Bundle savedInstanceState) {
+        if (savedInstanceState.containsKey(ARG_REST_RESPONSE)) {
+            mTagsContainer = (TagsContainerModel) savedInstanceState.getSerializable(ARG_REST_RESPONSE);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.TagsUpdated event) {
+        if (!shouldUpdateFragmentOnUpdateEvent(event)) {
+            return;
+        }
+
+        mTagsContainer = event.mTagsContainer;
+        mGroupIdToExpandedMap.clear();
+        updateUI();
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.SectionUpdateError event) {
+        if (!shouldUpdateFragmentOnErrorEvent(event)) {
+            return;
+        }
+
+        mTagsContainer = null;
+        mGroupIdToExpandedMap.clear();
+        showErrorUI(event.mError);
+    }
 
     @Override
     protected void updateUI() {
@@ -25,14 +74,10 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
             return;
         }
 
-        if (isErrorResponse()) {
-            showErrorUI();
-            return;
-        }
-
         if (hasTags()) {
             BaseExpandableListAdapter adapter = new MyExpandableListAdapter(getActivity(), getTags());
-            StatsUIHelper.reloadGroupViews(getActivity(), adapter, mGroupIdToExpandedMap, mList, getMaxNumberOfItemsToShowInList());
+            StatsUIHelper.reloadGroupViews(getActivity(), adapter, mGroupIdToExpandedMap, mList,
+                                           getMaxNumberOfItemsToShowInList());
             showHideNoResultsUI(false);
         } else {
             showHideNoResultsUI(true);
@@ -40,16 +85,16 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
     }
 
     private boolean hasTags() {
-        return !isDataEmpty()
-                && ((TagsContainerModel) mDatamodels[0]).getTags() != null
-                && (((TagsContainerModel) mDatamodels[0]).getTags()).size() > 0;
+        return mTagsContainer != null
+               && mTagsContainer.getTags() != null
+               && mTagsContainer.getTags().size() > 0;
     }
 
     private List<TagsModel> getTags() {
         if (!hasTags()) {
-            return null;
+            return new ArrayList<TagsModel>(0);
         }
-        return ((TagsContainerModel) mDatamodels[0]).getTags();
+        return mTagsContainer.getTags();
     }
 
     @Override
@@ -63,9 +108,9 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
     }
 
     @Override
-    protected StatsService.StatsEndpointsEnum[] getSectionsToUpdate() {
-        return new StatsService.StatsEndpointsEnum[]{
-                StatsService.StatsEndpointsEnum.TAGS_AND_CATEGORIES
+    protected StatsServiceLogic.StatsEndpointsEnum[] sectionsToUpdate() {
+        return new StatsServiceLogic.StatsEndpointsEnum[]{
+                StatsServiceLogic.StatsEndpointsEnum.TAGS_AND_CATEGORIES
         };
     }
 
@@ -73,14 +118,17 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
     protected int getEntryLabelResId() {
         return R.string.stats_entry_tags_and_categories;
     }
+
     @Override
     protected int getTotalsLabelResId() {
         return R.string.stats_totals_views;
     }
+
     @Override
     protected int getEmptyLabelTitleResId() {
         return R.string.stats_empty_tags_and_categories;
     }
+
     @Override
     protected int getEmptyLabelDescResId() {
         return R.string.stats_empty_tags_and_categories_desc;
@@ -88,16 +136,16 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
 
     private class MyExpandableListAdapter extends BaseExpandableListAdapter {
         public final LayoutInflater inflater;
-        private final List<TagsModel> groups;
+        private final List<TagsModel> mGroups;
 
-        public MyExpandableListAdapter(Context context, List<TagsModel> groups) {
-            this.groups = groups;
+        MyExpandableListAdapter(Context context, List<TagsModel> groups) {
+            mGroups = groups;
             this.inflater = LayoutInflater.from(context);
         }
 
         @Override
         public Object getChild(int groupPosition, int childPosition) {
-            TagsModel currentGroup = groups.get(groupPosition);
+            TagsModel currentGroup = mGroups.get(groupPosition);
             List<TagModel> results = currentGroup.getTags();
             return results.get(childPosition);
         }
@@ -110,7 +158,6 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
         @Override
         public View getChildView(int groupPosition, final int childPosition,
                                  boolean isLastChild, View convertView, ViewGroup parent) {
-
             final TagModel children = (TagModel) getChild(groupPosition, childPosition);
 
             if (convertView == null) {
@@ -118,7 +165,7 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
                 // configure view holder
                 StatsViewHolder viewHolder = new StatsViewHolder(convertView);
 
-                //Make the picture smaller (same size of the chevron) only for tag
+                // Make the picture smaller (same size of the chevron) only for tag
                 ViewGroup.LayoutParams params = viewHolder.networkImageView.getLayoutParams();
                 params.width = DisplayUtils.dpToPx(convertView.getContext(), 12);
                 params.height = params.width;
@@ -137,16 +184,15 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
 
             // icon.
             holder.networkImageView.setVisibility(View.VISIBLE);
-            holder.networkImageView.setImageDrawable(getResources().getDrawable(R.drawable.stats_icon_tags));
-
+            mImageManager.load(holder.networkImageView, getResources().getDrawable(R.drawable.ic_tag_white_24dp));
             return convertView;
         }
 
         @Override
         public int getChildrenCount(int groupPosition) {
-            TagsModel currentGroup = groups.get(groupPosition);
+            TagsModel currentGroup = mGroups.get(groupPosition);
             List<TagModel> tags = currentGroup.getTags();
-            if (tags == null || tags.size() == 1 ) {
+            if (tags == null || tags.size() == 1) {
                 return 0;
             } else {
                 return tags.size();
@@ -155,12 +201,12 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
 
         @Override
         public Object getGroup(int groupPosition) {
-            return groups.get(groupPosition);
+            return mGroups.get(groupPosition);
         }
 
         @Override
         public int getGroupCount() {
-            return groups.size();
+            return mGroups.size();
         }
 
 
@@ -172,14 +218,13 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
         @Override
         public View getGroupView(int groupPosition, boolean isExpanded,
                                  View convertView, ViewGroup parent) {
-
             if (convertView == null) {
                 convertView = inflater.inflate(R.layout.stats_list_cell, parent, false);
                 // configure view holder
                 StatsViewHolder viewHolder = new StatsViewHolder(convertView);
                 convertView.setTag(viewHolder);
 
-                //Make the picture smaller (same size of the chevron) only for tag
+                // Make the picture smaller (same size of the chevron) only for tag
                 ViewGroup.LayoutParams params = viewHolder.networkImageView.getLayoutParams();
                 params.width = DisplayUtils.dpToPx(convertView.getContext(), 12);
                 params.height = params.width;
@@ -194,7 +239,7 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
             for (int i = 0; i < tags.size(); i++) {
                 TagModel currentTag = tags.get(i);
                 groupName.append(currentTag.getName());
-                if ( i < (tags.size() - 1)) {
+                if (i < (tags.size() - 1)) {
                     groupName.append(" | ");
                 }
             }
@@ -202,24 +247,34 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
             int children = getChildrenCount(groupPosition);
 
             if (children > 0) {
-                holder.setEntryText(groupName.toString(), getResources().getColor(R.color.stats_link_text_color));
+                holder.setEntryText(groupName.toString(), getResources().getColor(R.color.link_stats));
             } else {
                 holder.setEntryTextOrLink(tags.get(0).getLink(), groupName.toString());
             }
 
             // totals
             holder.totalsTextView.setText(FormatUtils.formatDecimal(total));
+            holder.totalsTextView.setContentDescription(
+                    org.wordpress.android.util.StringUtils.getQuantityString(
+                            holder.totalsTextView.getContext(),
+                            R.string.stats_views_zero_desc,
+                            R.string.stats_views_one_desc,
+                            R.string.stats_views_many_desc,
+                            total));
 
             // expand/collapse chevron
             holder.chevronImageView.setVisibility(children > 0 ? View.VISIBLE : View.GONE);
 
 
             // icon
-            if ( children == 0 ) {
+            if (children == 0) {
                 holder.networkImageView.setVisibility(View.VISIBLE);
-                int drawableResource = groupName.toString().equalsIgnoreCase("uncategorized") ? R.drawable.stats_icon_categories
-                        : R.drawable.stats_icon_tags;
-                holder.networkImageView.setImageDrawable(getResources().getDrawable(drawableResource));
+                int drawableResource = groupName.toString().equalsIgnoreCase("uncategorized")
+                        ? R.drawable.ic_folder_white_24dp
+                        : R.drawable.ic_tag_white_24dp;
+                mImageManager.load(holder.networkImageView, getResources().getDrawable(drawableResource));
+            } else {
+              mImageManager.cancelRequestAndClearImageView(holder.networkImageView);
             }
 
             return convertView;
@@ -234,7 +289,6 @@ public class StatsTagsAndCategoriesFragment extends StatsAbstractListFragment {
         public boolean isChildSelectable(int groupPosition, int childPosition) {
             return false;
         }
-
     }
 
     @Override

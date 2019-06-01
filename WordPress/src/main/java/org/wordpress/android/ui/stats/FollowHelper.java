@@ -18,12 +18,12 @@ import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.ToastUtils;
 
 import java.lang.ref.WeakReference;
+import java.util.Locale;
 
-public class FollowHelper {
-
+class FollowHelper {
     private final WeakReference<Activity> mActivityRef;
 
-    public FollowHelper(Activity activity) {
+    FollowHelper(Activity activity) {
         mActivityRef = new WeakReference<>(activity);
     }
 
@@ -35,7 +35,7 @@ public class FollowHelper {
 
         final String workingText = followData.getFollowingText();
         final String followText = followData.getFollowText();
-        final String unfollowText =  followData.getFollowingHoverText();
+        final String unfollowText = followData.getFollowingHoverText();
 
         final PopupMenu popup = new PopupMenu(mActivityRef.get(), anchor);
         final MenuItem menuItem;
@@ -55,9 +55,9 @@ public class FollowHelper {
                 final RestClientUtils restClientUtils = WordPress.getRestClientUtils();
                 final String restPath;
                 if (!followData.isFollowing()) {
-                    restPath = String.format("/sites/%s/follows/new", followData.getSiteID());
+                    restPath = String.format(Locale.US, "/sites/%s/follows/new?source=android", followData.getSiteID());
                 } else {
-                    restPath = String.format("/sites/%s/follows/mine/delete", followData.getSiteID());
+                    restPath = String.format(Locale.US, "/sites/%s/follows/mine/delete", followData.getSiteID());
                 }
 
                 followData.isRestCallInProgress = true;
@@ -69,7 +69,6 @@ public class FollowHelper {
         });
 
         popup.show();
-
     }
 
 
@@ -77,7 +76,7 @@ public class FollowHelper {
         private final WeakReference<Activity> mActivityRef;
         private final FollowDataModel mFollowData;
 
-        public FollowRestListener(Activity activity, final FollowDataModel followData) {
+        FollowRestListener(Activity activity, final FollowDataModel followData) {
             this.mActivityRef = new WeakReference<>(activity);
             this.mFollowData = followData;
         }
@@ -89,12 +88,12 @@ public class FollowHelper {
             }
 
             mFollowData.isRestCallInProgress = false;
-            if (response!= null) {
+            if (response != null) {
                 try {
                     boolean isFollowing = response.getBoolean("is_following");
                     mFollowData.setIsFollowing(isFollowing);
                 } catch (JSONException e) {
-                    e.printStackTrace();
+                    AppLog.e(AppLog.T.STATS, e.getMessage());
                 }
             }
         }
@@ -103,7 +102,7 @@ public class FollowHelper {
         public void onErrorResponse(final VolleyError volleyError) {
             if (volleyError != null) {
                 AppLog.e(AppLog.T.STATS, "Error while following a blog "
-                        + volleyError.getMessage(), volleyError);
+                                         + volleyError.getMessage(), volleyError);
             }
             if (mActivityRef.get() == null || mActivityRef.get().isFinishing()) {
                 return;
@@ -111,8 +110,8 @@ public class FollowHelper {
 
             mFollowData.isRestCallInProgress = false;
             ToastUtils.showToast(mActivityRef.get(),
-                    mActivityRef.get().getString(R.string.reader_toast_err_follow_blog),
-                    ToastUtils.Duration.LONG);
+                                 mActivityRef.get().getString(R.string.reader_toast_err_follow_blog),
+                                 ToastUtils.Duration.LONG);
         }
     }
 }

@@ -10,14 +10,55 @@ import com.android.volley.toolbox.JsonArrayRequest;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.wordpress.android.WordPress;
+import org.wordpress.android.datasets.ReaderThumbnailTable;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.JSONUtils;
+import org.wordpress.android.util.MediaUtils;
 
 public class ReaderVideoUtils {
-	private ReaderVideoUtils() {
-		throw new AssertionError();
-	}
+    private ReaderVideoUtils() {
+        throw new AssertionError();
+    }
+
+    /*
+     * determine whether we can show a thumbnail image for the passed video - currently
+     * we support YouTube, Vimeo & standard images
+     */
+    public static boolean canShowVideoThumbnail(String videoUrl) {
+        return isVimeoLink(videoUrl)
+               || isYouTubeVideoLink(videoUrl)
+               || MediaUtils.isValidImage(videoUrl);
+    }
+
+    public static void retrieveVideoThumbnailUrl(final String videoUrl, final VideoThumbnailUrlListener listener) {
+        // if this is a YouTube video we can determine the thumbnail url from the passed url,
+        // otherwise check if we've already cached the thumbnail url for this video
+        String thumbnailUrl;
+        if (ReaderVideoUtils.isYouTubeVideoLink(videoUrl)) {
+            thumbnailUrl = ReaderVideoUtils.getYouTubeThumbnailUrl(videoUrl);
+        } else {
+            thumbnailUrl = ReaderThumbnailTable.getThumbnailUrl(videoUrl);
+        }
+        if (!TextUtils.isEmpty(thumbnailUrl)) {
+            listener.showThumbnail(thumbnailUrl);
+        } else if (MediaUtils.isValidImage(videoUrl)) {
+            listener.showThumbnail(videoUrl);
+        } else if (ReaderVideoUtils.isVimeoLink(videoUrl)) {
+            listener.showPlaceholder();
+            ReaderVideoUtils.requestVimeoThumbnail(videoUrl, new FetchVideoThumbnailListener() {
+                @Override
+                public void onResponse(boolean successful, String thumbnailUrl) {
+                    listener.showThumbnail(videoUrl);
+                    listener.cacheThumbnailUrl(videoUrl);
+                }
+            });
+        } else {
+            AppLog.d(AppLog.T.UTILS, "no video thumbnail for " + videoUrl);
+            listener.showPlaceholder();
+        }
+    }
+
 
     /*
      * returns the url to get the full-size (480x360) thumbnail url for the passed video
@@ -25,113 +66,114 @@ public class ReaderVideoUtils {
      */
     public static String getYouTubeThumbnailUrl(final String videoUrl) {
         String videoId = getYouTubeVideoId(videoUrl);
-        if (TextUtils.isEmpty(videoId))
+        if (TextUtils.isEmpty(videoId)) {
             return "";
+        }
         // note that this *must* use https rather than http - ex: https://img.youtube.com/vi/ClbE019cLNI/0.jpg
         return "https://img.youtube.com/vi/" + videoId + "/0.jpg";
     }
 
-	/*
-	 * returns true if the passed url is a link to a YouTube video
-	 */
-	public static boolean isYouTubeVideoLink(final String link) {
-		return (!TextUtils.isEmpty(getYouTubeVideoId(link)));
-	}
-
     /*
-     * accepts a YouTube link in any format (such as the /embed/ format) and turns it into a
-     * standard YouTube video link
+     * returns true if the passed url is a link to a YouTube video
      */
-    public static String fixYouTubeVideoLink(final String videoUrl) {
-        String videoId = getYouTubeVideoId(videoUrl);
-        if (TextUtils.isEmpty(videoId))
-            return videoUrl;
-        return "http://www.youtube.com/watch?v=" + videoId;
+    public static boolean isYouTubeVideoLink(final String link) {
+        return (!TextUtils.isEmpty(getYouTubeVideoId(link)));
     }
 
-	/*
-	 * extract the video id from the passed YouTube url
+    /*
+     * extract the video id from the passed YouTube url
      */
-	private static String getYouTubeVideoId(final String link) {
-		if (link==null)
-			return "";
+    private static String getYouTubeVideoId(final String link) {
+        if (link == null) {
+            return "";
+        }
 
-		Uri uri = Uri.parse(link);
-		try {
-			String host = uri.getHost();
-			if (host==null)
-				return "";
+        Uri uri = Uri.parse(link);
+        try {
+            String host = uri.getHost();
+            if (host == null) {
+                return "";
+            }
 
-			// youtube.com links
-			if (host.equals("youtube.com") || host.equals("www.youtube.com")) {
-				// if link contains "watch" in the path, then the id is in the "v=" query param
-				if (link.contains("watch"))
-					return uri.getQueryParameter("v");
+            // youtube.com links
+            if (host.equals("youtube.com") || host.equals("www.youtube.com")) {
+                // if link contains "watch" in the path, then the id is in the "v=" query param
+                if (link.contains("watch")) {
+                    return uri.getQueryParameter("v");
+                }
                 // if the link contains "embed" in the path, then the id is the last path segment
                 // ex: https://www.youtube.com/embed/fw3w68YrKwc?version=3&#038;rel=1&#038;
-                if (link.contains("/embed/"))
+                if (link.contains("/embed/")) {
                     return uri.getLastPathSegment();
-				return "";
-			}
+                }
+                return "";
+            }
 
-			// youtu.be urls have the videoId as the path - ex:  http://youtu.be/pEnXclbO9jg
-			if (host.equals("youtu.be")) {
-				String path = uri.getPath();
-				if (path==null)
-					return "";
-				// remove the leading slash
-				return path.replace("/", "");
-			}
+            // youtu.be urls have the videoId as the path - ex: http://youtu.be/pEnXclbO9jg
+            if (host.equals("youtu.be")) {
+                String path = uri.getPath();
+                if (path == null) {
+                    return "";
+                }
+                // remove the leading slash
+                return path.replace("/", "");
+            }
 
-			// YouTube mobile urls include video id in fragment, ex: http://m.youtube.com/?dc=organic&source=mog#/watch?v=t77Vlme_pf8
-			if (host.equals("m.youtube.com")) {
-				String fragment = uri.getFragment();
-				if (fragment==null)
-					return "";
-				int index = fragment.lastIndexOf("v=");
-				if (index!=-1)
-					return fragment.substring(index+2, fragment.length());
-			}
+            // YouTube mobile urls include video id in fragment, ex:
+            // http://m.youtube.com/?dc=organic&source=mog#/watch?v=t77Vlme_pf8
+            if (host.equals("m.youtube.com")) {
+                String fragment = uri.getFragment();
+                if (fragment == null) {
+                    return "";
+                }
+                int index = fragment.lastIndexOf("v=");
+                if (index != -1) {
+                    return fragment.substring(index + 2, fragment.length());
+                }
+            }
 
-			return "";
-		} catch (UnsupportedOperationException e) {
-			AppLog.e(T.READER, e);
-			return "";
-		} catch (IndexOutOfBoundsException e) {
-			// thrown by substring
+            return "";
+        } catch (UnsupportedOperationException e) {
             AppLog.e(T.READER, e);
-			return "";
-		}
-	}
+            return "";
+        } catch (IndexOutOfBoundsException e) {
+            // thrown by substring
+            AppLog.e(T.READER, e);
+            return "";
+        }
+    }
 
     /*
      * returns true if the passed url is a link to a Vimeo video
      */
-	public static boolean isVimeoLink(final String link) {
-		return (!TextUtils.isEmpty(getVimeoVideoId(link)));
-	}
+    public static boolean isVimeoLink(final String link) {
+        return (!TextUtils.isEmpty(getVimeoVideoId(link)));
+    }
 
     /*
      * extract the video id from the passed Vimeo url
      * ex: http://player.vimeo.com/video/72386905 -> 72386905
      */
-	private static String getVimeoVideoId(final String link) {
-		if (link==null)
-			return "";
-        if (!link.contains("player.vimeo.com"))
+    private static String getVimeoVideoId(final String link) {
+        if (link == null) {
             return "";
+        }
+        if (!link.contains("player.vimeo.com")) {
+            return "";
+        }
 
-		Uri uri = Uri.parse(link);
-		return uri.getLastPathSegment();
-	}
+        Uri uri = Uri.parse(link);
+        return uri.getLastPathSegment();
+    }
 
     /*
      * unlike YouTube thumbnails, Vimeo thumbnails require network request
      */
-    public static void requestVimeoThumbnail(final String videoUrl, final VideoThumbnailListener thumbListener) {
+    public static void requestVimeoThumbnail(final String videoUrl, final FetchVideoThumbnailListener thumbListener) {
         // useless without a listener
-        if (thumbListener==null)
+        if (thumbListener == null) {
             return;
+        }
 
         String id = getVimeoVideoId(videoUrl);
         if (TextUtils.isEmpty(id)) {
@@ -142,10 +184,11 @@ public class ReaderVideoUtils {
         Response.Listener<JSONArray> listener = new Response.Listener<JSONArray>() {
             public void onResponse(JSONArray response) {
                 String thumbnailUrl = null;
-                if (response!=null && response.length() > 0) {
+                if (response != null && response.length() > 0) {
                     JSONObject json = response.optJSONObject(0);
-                    if (json!=null && json.has("thumbnail_large"))
-                        thumbnailUrl = JSONUtil.getString(json, "thumbnail_large");
+                    if (json != null && json.has("thumbnail_large")) {
+                        thumbnailUrl = JSONUtils.getString(json, "thumbnail_large");
+                    }
                 }
                 if (TextUtils.isEmpty(thumbnailUrl)) {
                     thumbListener.onResponse(false, null);
@@ -162,13 +205,19 @@ public class ReaderVideoUtils {
             }
         };
 
-        String url = "http://vimeo.com/api/v2/video/" + id + ".json";
+        String url = "https://vimeo.com/api/v2/video/" + id + ".json";
         JsonArrayRequest request = new JsonArrayRequest(url, listener, errorListener);
 
-        WordPress.requestQueue.add(request);
+        WordPress.sRequestQueue.add(request);
     }
 
-    public static interface VideoThumbnailListener {
-        public void onResponse(boolean successful, String thumbnailUrl);
+    public interface FetchVideoThumbnailListener {
+        void onResponse(boolean successful, String thumbnailUrl);
+    }
+
+    public interface VideoThumbnailUrlListener {
+        void showThumbnail(String thumbnailUrl);
+        void showPlaceholder();
+        void cacheThumbnailUrl(String thumbnailUrl);
     }
 }

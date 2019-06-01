@@ -1,18 +1,21 @@
 package org.wordpress.android.ui.notifications.blocks;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.text.TextUtils;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.ImageView;
 import android.widget.TextView;
 
-import org.json.JSONObject;
 import org.wordpress.android.R;
-import org.wordpress.android.ui.notifications.NotificationsConstants;
-import org.wordpress.android.util.JSONUtil;
-import org.wordpress.android.util.PhotonUtils;
-import org.wordpress.android.widgets.WPNetworkImageView;
+import org.wordpress.android.fluxc.tools.FormattableContent;
+import org.wordpress.android.ui.notifications.utils.NotificationsUtilsWrapper;
+import org.wordpress.android.util.FormattableContentUtilsKt;
+import org.wordpress.android.util.GravatarUtils;
+import org.wordpress.android.util.image.ImageManager;
+import org.wordpress.android.util.image.ImageType;
 
 /**
  * A block that displays information about a User (such as a user that liked a post)
@@ -24,17 +27,20 @@ public class UserNoteBlock extends NoteBlock {
 
     public interface OnGravatarClickedListener {
         // userId is currently unused, but will be handy once a profile view is added to the app
-        public void onGravatarClicked(long siteId, long userId, String siteUrl);
+        void onGravatarClicked(long siteId, long userId, String siteUrl);
     }
 
     public UserNoteBlock(
             Context context,
-            JSONObject noteObject,
+            FormattableContent noteObject,
             OnNoteBlockTextClickListener onNoteBlockTextClickListener,
-            OnGravatarClickedListener onGravatarClickedListener) {
-        super(noteObject, onNoteBlockTextClickListener);
+            OnGravatarClickedListener onGravatarClickedListener,
+            ImageManager imageManager,
+            NotificationsUtilsWrapper notificationsUtilsWrapper) {
+        super(noteObject, imageManager, notificationsUtilsWrapper, onNoteBlockTextClickListener);
+
         if (context != null) {
-            setAvatarSize(context.getResources().getDimensionPixelSize(R.dimen.avatar_sz_medium));
+            setAvatarSize(context.getResources().getDimensionPixelSize(R.dimen.notifications_avatar_sz));
         }
         mGravatarClickedListener = onGravatarClickedListener;
     }
@@ -57,10 +63,11 @@ public class UserNoteBlock extends NoteBlock {
         return R.layout.note_block_user;
     }
 
+    @SuppressLint("ClickableViewAccessibility") // fixed by setting a click listener to avatarImageView
     @Override
     public View configureView(View view) {
-        final UserActionNoteBlockHolder noteBlockHolder = (UserActionNoteBlockHolder)view.getTag();
-        noteBlockHolder.nameTextView.setText(getNoteText().toString());
+        final UserActionNoteBlockHolder noteBlockHolder = (UserActionNoteBlockHolder) view.getTag();
+        noteBlockHolder.mNameTextView.setText(getNoteText().toString());
 
 
         String linkedText = null;
@@ -71,35 +78,40 @@ public class UserNoteBlock extends NoteBlock {
         }
 
         if (!TextUtils.isEmpty(linkedText)) {
-            noteBlockHolder.urlTextView.setText(linkedText);
-            noteBlockHolder.urlTextView.setVisibility(View.VISIBLE);
+            noteBlockHolder.mUrlTextView.setText(linkedText);
+            noteBlockHolder.mUrlTextView.setVisibility(View.VISIBLE);
         } else {
-            noteBlockHolder.urlTextView.setVisibility(View.GONE);
+            noteBlockHolder.mUrlTextView.setVisibility(View.GONE);
         }
 
         if (hasUserBlogTagline()) {
-            noteBlockHolder.taglineTextView.setText(getUserBlogTagline());
-            noteBlockHolder.taglineTextView.setVisibility(View.VISIBLE);
+            noteBlockHolder.mTaglineTextView.setText(getUserBlogTagline());
+            noteBlockHolder.mTaglineTextView.setVisibility(View.VISIBLE);
         } else {
-            noteBlockHolder.taglineTextView.setVisibility(View.GONE);
+            noteBlockHolder.mTaglineTextView.setVisibility(View.GONE);
         }
 
+        String imageUrl = "";
         if (hasImageMediaItem()) {
-            String imageUrl = PhotonUtils.fixAvatar(getNoteMediaItem().optString("url", ""), getAvatarSize());
-            noteBlockHolder.avatarImageView.setImageUrl(imageUrl, WPNetworkImageView.ImageType.AVATAR);
+            imageUrl = GravatarUtils.fixGravatarUrl(getNoteMediaItem().getUrl(), getAvatarSize());
             if (!TextUtils.isEmpty(getUserUrl())) {
-                noteBlockHolder.avatarImageView.setOnTouchListener(mOnGravatarTouchListener);
-                noteBlockHolder.rootView.setBackgroundResource(R.drawable.notifications_header_selector);
-                noteBlockHolder.rootView.setOnClickListener(mOnClickListener);
+                //noinspection AndroidLintClickableViewAccessibility
+                noteBlockHolder.mAvatarImageView.setOnTouchListener(mOnGravatarTouchListener);
+                noteBlockHolder.mRootView.setEnabled(true);
+                noteBlockHolder.mRootView.setOnClickListener(mOnClickListener);
             } else {
-                noteBlockHolder.avatarImageView.setOnTouchListener(null);
-                noteBlockHolder.rootView.setBackgroundColor(NotificationsConstants.COLOR_CALYPSO_WHITE);
-                noteBlockHolder.rootView.setOnClickListener(null);
+                //noinspection AndroidLintClickableViewAccessibility
+                noteBlockHolder.mAvatarImageView.setOnTouchListener(null);
+                noteBlockHolder.mRootView.setEnabled(false);
+                noteBlockHolder.mRootView.setOnClickListener(null);
             }
         } else {
-            noteBlockHolder.avatarImageView.setImageResource(R.drawable.gravatar_placeholder);
-            noteBlockHolder.avatarImageView.setOnTouchListener(null);
+            noteBlockHolder.mRootView.setEnabled(false);
+            noteBlockHolder.mRootView.setOnClickListener(null);
+            //noinspection AndroidLintClickableViewAccessibility
+            noteBlockHolder.mAvatarImageView.setOnTouchListener(null);
         }
+        mImageManager.loadIntoCircle(noteBlockHolder.mAvatarImageView, ImageType.AVATAR_WITH_BACKGROUND, imageUrl);
 
         return view;
     }
@@ -117,31 +129,31 @@ public class UserNoteBlock extends NoteBlock {
     }
 
     private class UserActionNoteBlockHolder {
-        private final View rootView;
-        private final TextView nameTextView;
-        private final TextView urlTextView;
-        private final TextView taglineTextView;
-        private final WPNetworkImageView avatarImageView;
+        private final View mRootView;
+        private final TextView mNameTextView;
+        private final TextView mUrlTextView;
+        private final TextView mTaglineTextView;
+        private final ImageView mAvatarImageView;
 
-        public UserActionNoteBlockHolder(View view) {
-            rootView = view.findViewById(R.id.user_block_root_view);
-            nameTextView = (TextView)view.findViewById(R.id.user_name);
-            urlTextView = (TextView)view.findViewById(R.id.user_blog_url);
-            taglineTextView = (TextView)view.findViewById(R.id.user_blog_tagline);
-            avatarImageView = (WPNetworkImageView)view.findViewById(R.id.user_avatar);
+        UserActionNoteBlockHolder(View view) {
+            mRootView = view.findViewById(R.id.user_block_root_view);
+            mNameTextView = view.findViewById(R.id.user_name);
+            mUrlTextView = view.findViewById(R.id.user_blog_url);
+            mTaglineTextView = view.findViewById(R.id.user_blog_tagline);
+            mAvatarImageView = view.findViewById(R.id.user_avatar);
         }
     }
 
     String getUserUrl() {
-        return JSONUtil.queryJSON(getNoteData(), "meta.links.home", "");
+        return FormattableContentUtilsKt.getMetaLinksHomeOrEmpty(getNoteData());
     }
 
     private String getUserBlogTitle() {
-        return JSONUtil.queryJSON(getNoteData(), "meta.titles.home", "");
+        return FormattableContentUtilsKt.getMetaTitlesHomeOrEmpty(getNoteData());
     }
 
     private String getUserBlogTagline() {
-        return JSONUtil.queryJSON(getNoteData(), "meta.titles.tagline", "");
+        return FormattableContentUtilsKt.getMetaTitlesTaglineOrEmpty(getNoteData());
     }
 
     private boolean hasUserUrl() {
@@ -159,28 +171,28 @@ public class UserNoteBlock extends NoteBlock {
     final View.OnTouchListener mOnGravatarTouchListener = new View.OnTouchListener() {
         @Override
         public boolean onTouch(View v, MotionEvent event) {
-
             int animationDuration = 150;
 
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 v.animate()
-                        .scaleX(0.9f)
-                        .scaleY(0.9f)
-                        .alpha(0.5f)
-                        .setDuration(animationDuration)
-                        .setInterpolator(new DecelerateInterpolator());
-            } else if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                 .scaleX(0.9f)
+                 .scaleY(0.9f)
+                 .alpha(0.5f)
+                 .setDuration(animationDuration)
+                 .setInterpolator(new DecelerateInterpolator());
+            } else if (event.getActionMasked() == MotionEvent.ACTION_UP
+                       || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
                 v.animate()
-                        .scaleX(1.0f)
-                        .scaleY(1.0f)
-                        .alpha(1.0f)
-                        .setDuration(animationDuration)
-                        .setInterpolator(new DecelerateInterpolator());
+                 .scaleX(1.0f)
+                 .scaleY(1.0f)
+                 .alpha(1.0f)
+                 .setDuration(animationDuration)
+                 .setInterpolator(new DecelerateInterpolator());
 
                 if (event.getActionMasked() == MotionEvent.ACTION_UP && mGravatarClickedListener != null) {
                     // Fire the listener, which will load the site preview for the user's site
                     // In the future we can use this to load a 'profile view' (currently in R&D)
-                    showBlogPreview();
+                    v.performClick();
                 }
             }
 
@@ -188,12 +200,12 @@ public class UserNoteBlock extends NoteBlock {
         }
     };
 
-    private void showBlogPreview() {
-        long siteId = Long.valueOf(JSONUtil.queryJSON(getNoteData(), "meta.ids.site", 0));
-        long userId = Long.valueOf(JSONUtil.queryJSON(getNoteData(), "meta.ids.user", 0));
+    protected void showBlogPreview() {
         String siteUrl = getUserUrl();
         if (mGravatarClickedListener != null) {
-            mGravatarClickedListener.onGravatarClicked(siteId, userId, siteUrl);
+            mGravatarClickedListener
+                    .onGravatarClicked(FormattableContentUtilsKt.getMetaIdsSiteIdOrZero(getNoteData()),
+                            FormattableContentUtilsKt.getMetaIdsUserIdOrZero(getNoteData()), siteUrl);
         }
     }
 }

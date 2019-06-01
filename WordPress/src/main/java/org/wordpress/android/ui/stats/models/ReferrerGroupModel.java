@@ -6,7 +6,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.wordpress.android.ui.stats.StatsUtils;
-import org.wordpress.android.util.JSONUtil;
+import org.wordpress.android.util.JSONUtils;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -17,7 +17,7 @@ import java.util.List;
  * A model to represent a referrer group stat
  */
 public class ReferrerGroupModel implements Serializable {
-    private String mBlogId;
+    private long mBlogId;
     private long mDate;
 
     private String mGroupId;
@@ -25,69 +25,58 @@ public class ReferrerGroupModel implements Serializable {
     private String mIcon;
     private int mTotal;
     private String mUrl;
-    private List<SingleItemModel> mResults;
+    private List<ReferrerResultModel> mResults;
 
-    public ReferrerGroupModel(String blogId, String date, JSONObject groupJSON) throws JSONException {
+    public transient boolean isRestCallInProgress = false;
+    public transient boolean isMarkedAsSpam = false;
+
+    public ReferrerGroupModel(long blogId, String date, JSONObject groupJSON) throws JSONException {
         setBlogId(blogId);
         setDate(StatsUtils.toMs(date));
 
         setGroupId(groupJSON.getString("group"));
         setName(groupJSON.getString("name"));
         setTotal(groupJSON.getInt("total"));
-        setIcon(JSONUtil.getString(groupJSON, "icon"));
+        setIcon(JSONUtils.getString(groupJSON, "icon"));
 
-        // if URL is set in the response there is one result only. No need to unfold "results"
-        if (!TextUtils.isEmpty(JSONUtil.getString(groupJSON, "url"))) {
-            setUrl(JSONUtil.getString(groupJSON, "url"));
-        } else {
-            // Referrers is a 3-levels depth structure. We don't have 3 levels UI for now. Unfold childs here.
-            JSONArray resultsJSON = groupJSON.getJSONArray("results");
+        // if URL is set in the response there is one result only.
+        if (!TextUtils.isEmpty(JSONUtils.getString(groupJSON, "url"))) {
+            setUrl(JSONUtils.getString(groupJSON, "url"));
+        }
+
+        // results is an array when there are results, otherwise it's an object.
+        JSONArray resultsArray = groupJSON.optJSONArray("results");
+        if (resultsArray != null) {
             mResults = new ArrayList<>();
-            for (int i = 0; i < resultsJSON.length(); i++) {
-                JSONObject currentResultJSON = resultsJSON.getJSONObject(i);
-                if (currentResultJSON.has("children")) {
-                    JSONArray currentResultChildensJSON = currentResultJSON.getJSONArray("children");
-                    for (int j = 0; j < currentResultChildensJSON.length(); j++) {
-                        JSONObject currentChild = currentResultChildensJSON.getJSONObject(j);
-                        mResults.add(getChildren(blogId, date, currentChild));
-                    }
-                } else {
-                    mResults.add(getChildren(blogId, date, currentResultJSON));
-                }
+            for (int i = 0; i < resultsArray.length(); i++) {
+                JSONObject currentResultJSON = resultsArray.getJSONObject(i);
+                ReferrerResultModel currentResultModel = new ReferrerResultModel(blogId,
+                                                                                 date, currentResultJSON);
+                mResults.add(currentResultModel);
             }
-
-            // Sort the childs by views.
-            Collections.sort(mResults, new java.util.Comparator<SingleItemModel>() {
-                public int compare(SingleItemModel o1, SingleItemModel o2) {
+            // Sort the results by views.
+            Collections.sort(mResults, new java.util.Comparator<ReferrerResultModel>() {
+                public int compare(ReferrerResultModel o1, ReferrerResultModel o2) {
                     // descending order
-                    return o2.getTotals() - o1.getTotals();
+                    return o2.getViews() - o1.getViews();
                 }
             });
-
         }
     }
 
-    private SingleItemModel getChildren(String blogId, String date, JSONObject child) throws JSONException {
-        String name = child.getString("name");
-        int totals = child.getInt("views");
-        String icon = child.optString("icon");
-        String url = child.optString("url");
-        return new SingleItemModel(blogId, date, null, name, totals, url, icon);
-    }
-
-    public String getBlogId() {
+    public long getBlogId() {
         return mBlogId;
     }
 
-    public void setBlogId(String blogId) {
-        this.mBlogId = blogId;
+    public void setBlogId(long blogId) {
+        mBlogId = blogId;
     }
 
     public long getDate() {
         return mDate;
     }
 
-    public void setDate(long date) {
+    private void setDate(long date) {
         this.mDate = date;
     }
 
@@ -95,7 +84,7 @@ public class ReferrerGroupModel implements Serializable {
         return mGroupId;
     }
 
-    public void setGroupId(String groupId) {
+    private void setGroupId(String groupId) {
         this.mGroupId = groupId;
     }
 
@@ -103,7 +92,7 @@ public class ReferrerGroupModel implements Serializable {
         return mName;
     }
 
-    public void setName(String name) {
+    private void setName(String name) {
         this.mName = name;
     }
 
@@ -111,7 +100,7 @@ public class ReferrerGroupModel implements Serializable {
         return mTotal;
     }
 
-    public void setTotal(int total) {
+    private void setTotal(int total) {
         this.mTotal = total;
     }
 
@@ -119,7 +108,7 @@ public class ReferrerGroupModel implements Serializable {
         return mUrl;
     }
 
-    public void setUrl(String url) {
+    private void setUrl(String url) {
         this.mUrl = url;
     }
 
@@ -127,9 +116,11 @@ public class ReferrerGroupModel implements Serializable {
         return mIcon;
     }
 
-    public void setIcon(String icon) {
+    private void setIcon(String icon) {
         this.mIcon = icon;
     }
 
-    public List<SingleItemModel> getResults() { return mResults; }
+    public List<ReferrerResultModel> getResults() {
+        return mResults;
+    }
 }

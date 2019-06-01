@@ -1,57 +1,72 @@
 package org.wordpress.android.ui.reader;
 
-import android.content.BroadcastReceiver;
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.os.Bundle;
-import android.support.v4.content.LocalBroadcastManager;
-import android.support.v7.app.ActionBarActivity;
+import android.support.annotation.NonNull;
+import android.support.design.widget.Snackbar;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.Toolbar;
 import android.text.TextUtils;
 import android.view.KeyEvent;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
-import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
 import org.wordpress.android.datasets.ReaderCommentTable;
 import org.wordpress.android.datasets.ReaderPostTable;
 import org.wordpress.android.datasets.SuggestionTable;
+import org.wordpress.android.fluxc.store.AccountStore;
 import org.wordpress.android.models.ReaderComment;
 import org.wordpress.android.models.ReaderPost;
 import org.wordpress.android.models.Suggestion;
+import org.wordpress.android.ui.ActivityLauncher;
+import org.wordpress.android.ui.RequestCodes;
+import org.wordpress.android.ui.reader.ReaderPostPagerActivity.DirectOperation;
 import org.wordpress.android.ui.reader.actions.ReaderActions;
 import org.wordpress.android.ui.reader.actions.ReaderCommentActions;
+import org.wordpress.android.ui.reader.actions.ReaderPostActions;
 import org.wordpress.android.ui.reader.adapters.ReaderCommentAdapter;
+import org.wordpress.android.ui.reader.services.ReaderCommentService;
 import org.wordpress.android.ui.reader.views.ReaderRecyclerView;
 import org.wordpress.android.ui.suggestion.adapters.SuggestionAdapter;
-import org.wordpress.android.ui.suggestion.service.SuggestionService;
+import org.wordpress.android.ui.suggestion.service.SuggestionEvents;
 import org.wordpress.android.ui.suggestion.util.SuggestionServiceConnectionManager;
 import org.wordpress.android.ui.suggestion.util.SuggestionUtils;
 import org.wordpress.android.util.AppLog;
 import org.wordpress.android.util.AppLog.T;
 import org.wordpress.android.util.DisplayUtils;
 import org.wordpress.android.util.EditTextUtils;
+import org.wordpress.android.util.LocaleManager;
 import org.wordpress.android.util.NetworkUtils;
 import org.wordpress.android.util.ToastUtils;
 import org.wordpress.android.util.WPActivityUtils;
+import org.wordpress.android.util.analytics.AnalyticsUtils;
+import org.wordpress.android.util.helpers.SwipeToRefreshHelper;
+import org.wordpress.android.util.widgets.CustomSwipeRefreshLayout;
+import org.wordpress.android.widgets.RecyclerItemDecoration;
 import org.wordpress.android.widgets.SuggestionAutoCompleteText;
-import org.wordpress.android.widgets.WPNetworkImageView;
+import org.wordpress.android.widgets.WPSnackbar;
 
 import java.util.List;
+import java.util.Locale;
 
-import javax.annotation.Nonnull;
+import javax.inject.Inject;
 
-public class ReaderCommentListActivity extends ActionBarActivity {
+import static org.wordpress.android.util.WPSwipeToRefreshHelper.buildSwipeToRefreshHelper;
 
+public class ReaderCommentListActivity extends AppCompatActivity {
     private static final String KEY_REPLY_TO_COMMENT_ID = "reply_to_comment_id";
     private static final String KEY_HAS_UPDATED_COMMENTS = "has_updated_comments";
 
@@ -62,57 +77,87 @@ public class ReaderCommentListActivity extends ActionBarActivity {
     private SuggestionAdapter mSuggestionAdapter;
     private SuggestionServiceConnectionManager mSuggestionServiceConnectionManager;
 
+    private SwipeToRefreshHelper mSwipeToRefreshHelper;
     private ReaderRecyclerView mRecyclerView;
     private SuggestionAutoCompleteText mEditComment;
-    private ImageView mImgSubmitComment;
+    private View mSubmitReplyBtn;
     private ViewGroup mCommentBox;
 
     private boolean mIsUpdatingComments;
     private boolean mHasUpdatedComments;
+    private boolean mIsSubmittingComment;
+    private boolean mUpdateOnResume;
+
+    private DirectOperation mDirectOperation;
     private long mReplyToCommentId;
+    private long mCommentId;
     private int mRestorePosition;
+    private String mInterceptedUri;
+
+    @Inject AccountStore mAccountStore;
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ((WordPress) getApplication()).component().inject(this);
         setContentView(R.layout.reader_activity_comment_list);
 
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
-        toolbar.setNavigationOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                onBackPressed();
-            }
-        });
-        getSupportActionBar().setDisplayShowTitleEnabled(true);
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        if (toolbar != null) {
+            setSupportActionBar(toolbar);
+            toolbar.setNavigationOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    onBackPressed();
+                }
+            });
+        }
+
+        ActionBar actionBar = getSupportActionBar();
+        if (actionBar != null) {
+            actionBar.setDisplayShowTitleEnabled(true);
+            actionBar.setDisplayHomeAsUpEnabled(true);
+        }
 
         if (savedInstanceState != null) {
             mBlogId = savedInstanceState.getLong(ReaderConstants.ARG_BLOG_ID);
             mPostId = savedInstanceState.getLong(ReaderConstants.ARG_POST_ID);
             mRestorePosition = savedInstanceState.getInt(ReaderConstants.KEY_RESTORE_POSITION);
             mHasUpdatedComments = savedInstanceState.getBoolean(KEY_HAS_UPDATED_COMMENTS);
+            mInterceptedUri = savedInstanceState.getString(ReaderConstants.ARG_INTERCEPTED_URI);
         } else {
             mBlogId = getIntent().getLongExtra(ReaderConstants.ARG_BLOG_ID, 0);
             mPostId = getIntent().getLongExtra(ReaderConstants.ARG_POST_ID, 0);
-            // remove all but the first page of comments for this post if there's an active
-            // connection - infinite scroll will take care of filling in subsequent pages
-            if (NetworkUtils.isNetworkAvailable(this)) {
-                ReaderCommentTable.purgeExcessCommentsForPost(mBlogId, mPostId);
-            }
+            mDirectOperation = (DirectOperation) getIntent()
+                    .getSerializableExtra(ReaderConstants.ARG_DIRECT_OPERATION);
+            mCommentId = getIntent().getLongExtra(ReaderConstants.ARG_COMMENT_ID, 0);
+            mInterceptedUri = getIntent().getStringExtra(ReaderConstants.ARG_INTERCEPTED_URI);
         }
 
+        mSwipeToRefreshHelper = buildSwipeToRefreshHelper(
+                (CustomSwipeRefreshLayout) findViewById(R.id.swipe_to_refresh),
+                new SwipeToRefreshHelper.RefreshListener() {
+                    @Override
+                    public void onRefreshStarted() {
+                        updatePostAndComments();
+                    }
+                }
+        );
+
         mRecyclerView = (ReaderRecyclerView) findViewById(R.id.recycler_view);
-        int spacingHorizontal = getResources().getDimensionPixelSize(R.dimen.reader_detail_margin);
+        int spacingHorizontal = 0;
         int spacingVertical = DisplayUtils.dpToPx(this, 1);
-        mRecyclerView.addItemDecoration(new ReaderRecyclerView.ReaderItemDecoration(spacingHorizontal, spacingVertical));
+        mRecyclerView.addItemDecoration(new RecyclerItemDecoration(spacingHorizontal, spacingVertical));
 
         mCommentBox = (ViewGroup) findViewById(R.id.layout_comment_box);
         mEditComment = (SuggestionAutoCompleteText) mCommentBox.findViewById(R.id.edit_comment);
-        mEditComment.getAutoSaveTextHelper().setUniqueId(String.format("%s%d%d", WordPress.getLoggedInUsername(this,
-                null), mPostId, mBlogId));
-        mImgSubmitComment = (ImageView) mCommentBox.findViewById(R.id.image_post_comment);
+        mEditComment.getAutoSaveTextHelper().setUniqueId(String.format(Locale.US, "%d%d", mPostId, mBlogId));
+        mSubmitReplyBtn = mCommentBox.findViewById(R.id.btn_submit_reply);
 
         if (!loadPost()) {
             ToastUtils.showToast(this, R.string.reader_toast_err_get_post);
@@ -123,95 +168,168 @@ public class ReaderCommentListActivity extends ActionBarActivity {
         mRecyclerView.setAdapter(getCommentAdapter());
 
         if (savedInstanceState != null) {
-            setReplyToCommentId(savedInstanceState.getLong(KEY_REPLY_TO_COMMENT_ID));
+            setReplyToCommentId(savedInstanceState.getLong(KEY_REPLY_TO_COMMENT_ID), false);
         }
 
-        refreshComments();
+        // update the post and its comments upon creation
+        mUpdateOnResume = (savedInstanceState == null);
 
-        mSuggestionServiceConnectionManager = new SuggestionServiceConnectionManager(this, (int) mBlogId);
-        mSuggestionAdapter = SuggestionUtils.setupSuggestions((int) mBlogId, this, mSuggestionServiceConnectionManager,
-                mPost.isWP());
+        mSuggestionServiceConnectionManager = new SuggestionServiceConnectionManager(this, mBlogId);
+        mSuggestionAdapter = SuggestionUtils.setupSuggestions(mBlogId, this, mSuggestionServiceConnectionManager,
+                                                              mPost.isWP());
         if (mSuggestionAdapter != null) {
             mEditComment.setAdapter(mSuggestionAdapter);
         }
+
+        AnalyticsUtils.trackWithReaderPostDetails(AnalyticsTracker.Stat.READER_ARTICLE_COMMENTS_OPENED, mPost);
+    }
+
+    private final View.OnClickListener mSignInClickListener = new View.OnClickListener() {
+        @Override
+        public void onClick(View v) {
+            if (isFinishing()) {
+                return;
+            }
+
+            AnalyticsUtils.trackWithInterceptedUri(AnalyticsTracker.Stat.READER_SIGN_IN_INITIATED, mInterceptedUri);
+            ActivityLauncher.loginWithoutMagicLink(ReaderCommentListActivity.this);
+        }
+    };
+
+    // to do a complete refresh we need to get updated post and new comments
+    private void updatePostAndComments() {
+        ReaderPostActions.updatePost(mPost, new ReaderActions.UpdateResultListener() {
+            @Override
+            public void onUpdateResult(ReaderActions.UpdateResult result) {
+                if (!isFinishing() && result.isNewOrChanged()) {
+                    // get the updated post and pass it to the adapter
+                    ReaderPost post = ReaderPostTable.getBlogPost(mBlogId, mPostId, false);
+                    if (post != null) {
+                        getCommentAdapter().setPost(post);
+                        mPost = post;
+                    }
+                }
+            }
+        });
+
+        // load the first page of comments
+        updateComments(true, false);
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        LocalBroadcastManager.getInstance(this)
-                .registerReceiver(mReceiver, new IntentFilter(SuggestionService.ACTION_SUGGESTIONS_LIST_UPDATED));
+        EventBus.getDefault().register(this);
+
+        refreshComments();
+
+        if (mUpdateOnResume && NetworkUtils.isNetworkAvailable(this)) {
+            updatePostAndComments();
+            mUpdateOnResume = false;
+        }
     }
 
-    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            int updatedBlogId = intent.getIntExtra(SuggestionService.SUGGESTIONS_LIST_UPDATED_EXTRA, 0);
-            // check if the updated suggestions are for the current blog and update the suggestions
-            if (updatedBlogId != 0 && mBlogId == updatedBlogId) {
-                List<Suggestion> suggestions = SuggestionTable.getSuggestionsForSite((int)mBlogId);
-                mSuggestionAdapter.setSuggestionList(suggestions);
-            }
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(SuggestionEvents.SuggestionNameListUpdated event) {
+        // check if the updated suggestions are for the current blog and update the suggestions
+        if (event.mRemoteBlogId != 0 && event.mRemoteBlogId == mBlogId && mSuggestionAdapter != null) {
+            List<Suggestion> suggestions = SuggestionTable.getSuggestionsForSite(event.mRemoteBlogId);
+            mSuggestionAdapter.setSuggestionList(suggestions);
         }
-    };
+    }
 
     @Override
     public void onPause() {
         super.onPause();
-
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(mReceiver);
+        EventBus.getDefault().unregister(this);
     }
 
-    private void setReplyToCommentId(long commentId) {
+    private void setReplyToCommentId(long commentId, boolean doFocus) {
         mReplyToCommentId = commentId;
-        mEditComment.setHint(mReplyToCommentId == 0 ?
-                R.string.reader_hint_comment_on_post : R.string.reader_hint_comment_on_comment);
+        mEditComment.setHint(mReplyToCommentId == 0
+                                     ? R.string.reader_hint_comment_on_post : R.string.reader_hint_comment_on_comment);
 
+        if (doFocus) {
+            mEditComment.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    final boolean isFocusableInTouchMode = mEditComment.isFocusableInTouchMode();
+
+                    mEditComment.setFocusableInTouchMode(true);
+                    EditTextUtils.showSoftInput(mEditComment);
+
+                    mEditComment.setFocusableInTouchMode(isFocusableInTouchMode);
+
+                    setupReplyToComment();
+                }
+            }, 200);
+        } else {
+            setupReplyToComment();
+        }
+    }
+
+    private void setupReplyToComment() {
         // if a comment is being replied to, highlight it and scroll it to the top so the user can
         // see which comment they're replying to - note that scrolling is delayed to give time for
         // listView to reposition due to soft keyboard appearing
         if (mReplyToCommentId != 0) {
-            mEditComment.requestFocus();
-            EditTextUtils.showSoftInput(mEditComment);
             getCommentAdapter().setHighlightCommentId(mReplyToCommentId, false);
+            getCommentAdapter().notifyDataSetChanged();
             mRecyclerView.postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     scrollToCommentId(mReplyToCommentId);
                 }
             }, 300);
+
+            // reset to replying to the post when user hasn't entered any text and hits
+            // the back button in the editText to hide the soft keyboard
+            mEditComment.setOnBackListener(new SuggestionAutoCompleteText.OnEditTextBackListener() {
+                @Override
+                public void onEditTextBack() {
+                    if (EditTextUtils.isEmpty(mEditComment)) {
+                        setReplyToCommentId(0, false);
+                    }
+                }
+            });
+        } else {
+            mEditComment.setOnBackListener(null);
         }
     }
 
     @Override
-    public void onSaveInstanceState(@Nonnull Bundle outState) {
+    public void onSaveInstanceState(@NonNull Bundle outState) {
         outState.putLong(ReaderConstants.ARG_BLOG_ID, mBlogId);
         outState.putLong(ReaderConstants.ARG_POST_ID, mPostId);
         outState.putInt(ReaderConstants.KEY_RESTORE_POSITION, getCurrentPosition());
         outState.putLong(KEY_REPLY_TO_COMMENT_ID, mReplyToCommentId);
         outState.putBoolean(KEY_HAS_UPDATED_COMMENTS, mHasUpdatedComments);
+        outState.putString(ReaderConstants.ARG_INTERCEPTED_URI, mInterceptedUri);
 
         super.onSaveInstanceState(outState);
     }
 
+    private void showCommentsClosedMessage(boolean show) {
+        TextView txtCommentsClosed = (TextView) findViewById(R.id.text_comments_closed);
+        if (txtCommentsClosed != null) {
+            txtCommentsClosed.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+    }
+
     private boolean loadPost() {
-        mPost = ReaderPostTable.getPost(mBlogId, mPostId, true);
+        mPost = ReaderPostTable.getBlogPost(mBlogId, mPostId, false);
         if (mPost == null) {
             return false;
         }
 
-        final TextView txtTitle = (TextView) findViewById(R.id.text_post_title);
-        final WPNetworkImageView imgAvatar = (WPNetworkImageView) findViewById(R.id.image_post_avatar);
-        final TextView txtCommentsClosed = (TextView) findViewById(R.id.text_comments_closed);
-
-        txtTitle.setText(mPost.getTitle());
-
-        String url = mPost.getPostAvatarForDisplay(getResources().getDimensionPixelSize(R.dimen.avatar_sz_small));
-        imgAvatar.setImageUrl(url, WPNetworkImageView.ImageType.AVATAR);
-
-        if (mPost.isCommentsOpen) {
+        TextView txtCommentsClosed = (TextView) findViewById(R.id.text_comments_closed);
+        if (!mAccountStore.hasAccessToken()) {
+            mCommentBox.setVisibility(View.GONE);
+            showCommentsClosedMessage(false);
+        } else if (mPost.isCommentsOpen) {
             mCommentBox.setVisibility(View.VISIBLE);
-            txtCommentsClosed.setVisibility(View.GONE);
+            showCommentsClosedMessage(false);
 
             mEditComment.setOnEditorActionListener(new TextView.OnEditorActionListener() {
                 @Override
@@ -223,7 +341,7 @@ public class ReaderCommentListActivity extends ActionBarActivity {
                 }
             });
 
-            mImgSubmitComment.setOnClickListener(new View.OnClickListener() {
+            mSubmitReplyBtn.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     submitComment();
@@ -232,16 +350,10 @@ public class ReaderCommentListActivity extends ActionBarActivity {
         } else {
             mCommentBox.setVisibility(View.GONE);
             mEditComment.setEnabled(false);
-            txtCommentsClosed.setVisibility(View.VISIBLE);
+            showCommentsClosedMessage(true);
         }
 
         return true;
-    }
-
-    @Override
-    public void finish() {
-        super.finish();
-        overridePendingTransition(R.anim.reader_activity_scale_in, R.anim.reader_flyout);
     }
 
     @Override
@@ -264,9 +376,14 @@ public class ReaderCommentListActivity extends ActionBarActivity {
             mCommentAdapter.setReplyListener(new ReaderCommentAdapter.RequestReplyListener() {
                 @Override
                 public void onRequestReply(long commentId) {
-                    setReplyToCommentId(commentId);
+                    setReplyToCommentId(commentId, true);
                 }
             });
+
+            // Enable post title click if we came here directly from notifications or deep linking
+            if (mDirectOperation != null) {
+                mCommentAdapter.enableHeaderClicks();
+            }
 
             // adapter calls this when data has been loaded & displayed
             mCommentAdapter.setDataLoadedListener(new ReaderInterfaces.DataLoadedListener() {
@@ -275,6 +392,13 @@ public class ReaderCommentListActivity extends ActionBarActivity {
                     if (!isFinishing()) {
                         if (isEmpty || !mHasUpdatedComments) {
                             updateComments(isEmpty, false);
+                        } else if (mCommentId > 0 || mDirectOperation != null) {
+                            if (mCommentId > 0) {
+                                // Scroll to the commentId once if it was passed to this activity
+                                smoothScrollToCommentId(mCommentId);
+                            }
+
+                            doDirectOperation();
                         } else if (mRestorePosition > 0) {
                             mRecyclerView.scrollToPosition(mRestorePosition);
                         }
@@ -299,18 +423,109 @@ public class ReaderCommentListActivity extends ActionBarActivity {
         return mCommentAdapter;
     }
 
+    private void doDirectOperation() {
+        if (mDirectOperation != null) {
+            switch (mDirectOperation) {
+                case COMMENT_JUMP:
+                    mCommentAdapter.setHighlightCommentId(mCommentId, false);
+
+                    // clear up the direct operation vars. Only performing it once.
+                    mDirectOperation = null;
+                    mCommentId = 0;
+                    break;
+                case COMMENT_REPLY:
+                    setReplyToCommentId(mCommentId, mAccountStore.hasAccessToken());
+
+                    // clear up the direct operation vars. Only performing it once.
+                    mDirectOperation = null;
+                    mCommentId = 0;
+                    break;
+                case COMMENT_LIKE:
+                    getCommentAdapter().setHighlightCommentId(mCommentId, false);
+                    if (!mAccountStore.hasAccessToken()) {
+                        WPSnackbar.make(mRecyclerView,
+                                      R.string.reader_snackbar_err_cannot_like_post_logged_out,
+                                      Snackbar.LENGTH_INDEFINITE)
+                                .setAction(R.string.sign_in, mSignInClickListener)
+                                .show();
+                    } else {
+                        ReaderComment comment = ReaderCommentTable.getComment(mPost.blogId, mPost.postId, mCommentId);
+                        if (comment == null) {
+                            ToastUtils.showToast(ReaderCommentListActivity.this,
+                                                 R.string.reader_toast_err_comment_not_found);
+                        } else if (comment.isLikedByCurrentUser) {
+                            ToastUtils.showToast(ReaderCommentListActivity.this,
+                                                 R.string.reader_toast_err_already_liked);
+                        } else {
+                            long wpComUserId = mAccountStore.getAccount().getUserId();
+                            if (ReaderCommentActions.performLikeAction(comment, true, wpComUserId)
+                                && getCommentAdapter().refreshComment(mCommentId)) {
+                                getCommentAdapter().setAnimateLikeCommentId(mCommentId);
+
+                                AnalyticsUtils.trackWithReaderPostDetails(
+                                        AnalyticsTracker.Stat.READER_ARTICLE_COMMENT_LIKED, mPost);
+                            } else {
+                                ToastUtils.showToast(ReaderCommentListActivity.this,
+                                                     R.string.reader_toast_err_generic);
+                            }
+                        }
+
+                        // clear up the direct operation vars. Only performing it once.
+                        mDirectOperation = null;
+                    }
+                    break;
+                case POST_LIKE:
+                    // nothing special to do in this case
+                    break;
+            }
+        } else {
+            mCommentId = 0;
+        }
+    }
+
     private ReaderPost getPost() {
         return mPost;
     }
 
     private void showProgress() {
         ProgressBar progress = (ProgressBar) findViewById(R.id.progress_loading);
-        progress.setVisibility(View.VISIBLE);
+        if (progress != null) {
+            progress.setVisibility(View.VISIBLE);
+        }
     }
 
     private void hideProgress() {
         ProgressBar progress = (ProgressBar) findViewById(R.id.progress_loading);
-        progress.setVisibility(View.GONE);
+        if (progress != null) {
+            progress.setVisibility(View.GONE);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(ReaderEvents.UpdateCommentsStarted event) {
+        mIsUpdatingComments = true;
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(ReaderEvents.UpdateCommentsEnded event) {
+        if (isFinishing()) {
+            return;
+        }
+
+        mIsUpdatingComments = false;
+        mHasUpdatedComments = true;
+        hideProgress();
+
+        if (event.getResult().isNewOrChanged()) {
+            mRestorePosition = getCurrentPosition();
+            refreshComments();
+        } else {
+            checkEmptyView();
+        }
+
+        setRefreshing(false);
     }
 
     /*
@@ -319,51 +534,30 @@ public class ReaderCommentListActivity extends ActionBarActivity {
     private void updateComments(boolean showProgress, boolean requestNextPage) {
         if (mIsUpdatingComments) {
             AppLog.w(T.READER, "reader comments > already updating comments");
+            setRefreshing(false);
             return;
         }
-
         if (!NetworkUtils.isNetworkAvailable(this)) {
             AppLog.w(T.READER, "reader comments > no connection, update canceled");
+            setRefreshing(false);
             return;
-        }
-
-        mIsUpdatingComments = true;
-
-        int pageNumber;
-        if (requestNextPage) {
-            int prevPage = ReaderCommentTable.getLastPageNumberForPost(mPost.blogId, mPost.postId);
-            pageNumber = prevPage + 1;
-        } else {
-            pageNumber = 1;
         }
 
         if (showProgress) {
             showProgress();
         }
-
-        ReaderActions.UpdateResultListener resultListener = new ReaderActions.UpdateResultListener() {
-            @Override
-            public void onUpdateResult(ReaderActions.UpdateResult result) {
-                mIsUpdatingComments = false;
-                mHasUpdatedComments = true;
-                if (!isFinishing()) {
-                    hideProgress();
-                    if (result.isNewOrChanged()) {
-                        mRestorePosition = getCurrentPosition();
-                        refreshComments();
-                    } else {
-                        checkEmptyView();
-                    }
-                }
-            }
-        };
-        AppLog.d(T.READER, "reader comments > updateComments, page " + pageNumber);
-        ReaderCommentActions.updateCommentsForPost(getPost(), pageNumber, resultListener);
+        ReaderCommentService.startService(this, mPost.blogId, mPost.postId, requestNextPage);
     }
 
     private void checkEmptyView() {
         TextView txtEmpty = (TextView) findViewById(R.id.text_empty);
-        boolean isEmpty = hasCommentAdapter() && getCommentAdapter().isEmpty();
+        if (txtEmpty == null) {
+            return;
+        }
+
+        boolean isEmpty = hasCommentAdapter()
+                          && getCommentAdapter().isEmpty()
+                          && !mIsSubmittingComment;
         if (isEmpty && !NetworkUtils.isNetworkAvailable(this)) {
             txtEmpty.setText(R.string.no_network_message);
             txtEmpty.setVisibility(View.VISIBLE);
@@ -374,7 +568,6 @@ public class ReaderCommentListActivity extends ActionBarActivity {
             txtEmpty.setVisibility(View.GONE);
         }
     }
-
 
     /*
      * refresh adapter so latest comments appear
@@ -388,9 +581,19 @@ public class ReaderCommentListActivity extends ActionBarActivity {
      * scrolls the passed comment to the top of the listView
      */
     private void scrollToCommentId(long commentId) {
-        int position = getCommentAdapter().indexOfCommentId(commentId);
+        int position = getCommentAdapter().positionOfCommentId(commentId);
         if (position > -1) {
             mRecyclerView.scrollToPosition(position);
+        }
+    }
+
+    /*
+     * Smoothly scrolls the passed comment to the top of the listView
+     */
+    private void smoothScrollToCommentId(long commentId) {
+        int position = getCommentAdapter().positionOfCommentId(commentId);
+        if (position > -1) {
+            mRecyclerView.smoothScrollToPosition(position);
         }
     }
 
@@ -407,10 +610,12 @@ public class ReaderCommentListActivity extends ActionBarActivity {
             return;
         }
 
-        AnalyticsTracker.track(AnalyticsTracker.Stat.READER_COMMENTED_ON_ARTICLE);
+        AnalyticsUtils.trackWithReaderPostDetails(
+                AnalyticsTracker.Stat.READER_ARTICLE_COMMENTED_ON, mPost);
 
-        mImgSubmitComment.setEnabled(false);
+        mSubmitReplyBtn.setEnabled(false);
         mEditComment.setEnabled(false);
+        mIsSubmittingComment = true;
 
         // generate a "fake" comment id to assign to the new comment so we can add it to the db
         // and reflect it in the adapter before the API call returns
@@ -422,29 +627,35 @@ public class ReaderCommentListActivity extends ActionBarActivity {
                 if (isFinishing()) {
                     return;
                 }
-                mImgSubmitComment.setEnabled(true);
+                mIsSubmittingComment = false;
+                mSubmitReplyBtn.setEnabled(true);
                 mEditComment.setEnabled(true);
                 if (succeeded) {
                     // stop highlighting the fake comment and replace it with the real one
                     getCommentAdapter().setHighlightCommentId(0, false);
                     getCommentAdapter().replaceComment(fakeCommentId, newComment);
-                    setReplyToCommentId(0);
+                    getCommentAdapter().refreshPost();
+                    setReplyToCommentId(0, false);
                     mEditComment.getAutoSaveTextHelper().clearSavedText(mEditComment);
                 } else {
                     mEditComment.setText(commentText);
                     getCommentAdapter().removeComment(fakeCommentId);
                     ToastUtils.showToast(
-                            ReaderCommentListActivity.this, R.string.reader_toast_err_comment_failed, ToastUtils.Duration.LONG);
+                            ReaderCommentListActivity.this, R.string.reader_toast_err_comment_failed,
+                            ToastUtils.Duration.LONG);
                 }
+                checkEmptyView();
             }
         };
 
+        long wpComUserId = mAccountStore.getAccount().getUserId();
         ReaderComment newComment = ReaderCommentActions.submitPostComment(
                 getPost(),
                 fakeCommentId,
                 commentText,
                 mReplyToCommentId,
-                actionListener);
+                actionListener,
+                wpComUserId);
 
         if (newComment != null) {
             mEditComment.setText(null);
@@ -454,15 +665,29 @@ public class ReaderCommentListActivity extends ActionBarActivity {
             getCommentAdapter().addComment(newComment);
             // make sure it's scrolled into view
             scrollToCommentId(fakeCommentId);
+            checkEmptyView();
         }
     }
 
     private int getCurrentPosition() {
         if (mRecyclerView != null && hasCommentAdapter()) {
-            return ((LinearLayoutManager)mRecyclerView.getLayoutManager()).findFirstVisibleItemPosition();
+            return ((LinearLayoutManager) mRecyclerView.getLayoutManager()).findFirstVisibleItemPosition();
         } else {
             return 0;
         }
     }
 
+    private void setRefreshing(boolean refreshing) {
+        mSwipeToRefreshHelper.setRefreshing(refreshing);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        // if user is returning from login, make sure to update the post and its comments
+        if (requestCode == RequestCodes.DO_LOGIN && resultCode == Activity.RESULT_OK) {
+            mUpdateOnResume = true;
+        }
+    }
 }

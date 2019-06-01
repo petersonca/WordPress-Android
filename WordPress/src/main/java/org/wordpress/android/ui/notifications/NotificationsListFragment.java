@@ -1,428 +1,343 @@
 package org.wordpress.android.ui.notifications;
 
 import android.app.Activity;
-import android.app.Fragment;
-import android.app.NotificationManager;
 import android.content.Intent;
 import android.os.Bundle;
-import android.os.Handler;
 import android.os.Parcelable;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.ActivityOptionsCompat;
-import android.support.v4.widget.SwipeRefreshLayout;
-import android.support.v7.widget.DefaultItemAnimator;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.support.design.widget.AppBarLayout;
+import android.support.design.widget.TabLayout;
+import android.support.design.widget.TabLayout.OnTabSelectedListener;
+import android.support.design.widget.TabLayout.Tab;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentPagerAdapter;
+import android.support.v7.widget.Toolbar;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.TextView;
 
-import com.cocosw.undobar.UndoBarController;
-import com.simperium.client.Bucket;
-import com.simperium.client.BucketObject;
-import com.simperium.client.BucketObjectMissingException;
-
-import org.wordpress.android.GCMIntentService;
+import org.greenrobot.eventbus.EventBus;
 import org.wordpress.android.R;
+import org.wordpress.android.WordPress;
 import org.wordpress.android.analytics.AnalyticsTracker;
-import org.wordpress.android.models.CommentStatus;
-import org.wordpress.android.models.Note;
-import org.wordpress.android.ui.comments.CommentActions;
+import org.wordpress.android.analytics.AnalyticsTracker.Stat;
+import org.wordpress.android.fluxc.model.SiteModel;
+import org.wordpress.android.fluxc.store.AccountStore;
+import org.wordpress.android.ui.JetpackConnectionWebViewActivity;
+import org.wordpress.android.ui.RequestCodes;
+import org.wordpress.android.ui.WPWebViewActivity;
+import org.wordpress.android.ui.main.MainToolbarFragment;
+import org.wordpress.android.ui.main.WPMainActivity;
 import org.wordpress.android.ui.notifications.adapters.NotesAdapter;
-import org.wordpress.android.ui.notifications.utils.SimperiumUtils;
-import org.wordpress.android.ui.reader.actions.ReaderAuthActions;
+import org.wordpress.android.ui.notifications.adapters.NotesAdapter.FILTERS;
+import org.wordpress.android.ui.notifications.services.NotificationsUpdateServiceStarter;
 import org.wordpress.android.util.AppLog;
-import org.wordpress.android.util.StringUtils;
-import org.wordpress.android.util.ToastUtils;
-import org.wordpress.android.util.ptr.SwipeToRefreshHelper;
+import org.wordpress.android.util.AppLog.T;
+import org.wordpress.android.util.NetworkUtils;
+import org.wordpress.android.util.WPUrlUtils;
+import org.wordpress.android.widgets.WPViewPager;
 
-import javax.annotation.Nonnull;
+import java.util.HashMap;
+import java.util.Map;
 
-public class NotificationsListFragment extends Fragment implements Bucket.Listener<Note> {
-    public static final String NOTIFICATION_ACTION = "org.wordpress.android.NOTIFICATION";
+import javax.inject.Inject;
+
+import static org.wordpress.android.analytics.AnalyticsTracker.NOTIFICATIONS_SELECTED_FILTER;
+import static org.wordpress.android.ui.JetpackConnectionSource.NOTIFICATIONS;
+import static org.wordpress.android.ui.notifications.services.NotificationsUpdateServiceStarter.IS_TAPPED_ON_NOTIFICATION;
+import static org.wordpress.android.ui.stats.StatsConnectJetpackActivity.FAQ_URL;
+
+public class NotificationsListFragment extends Fragment implements MainToolbarFragment {
     public static final String NOTE_ID_EXTRA = "noteId";
     public static final String NOTE_INSTANT_REPLY_EXTRA = "instantReply";
+    public static final String NOTE_PREFILLED_REPLY_EXTRA = "prefilledReplyText";
     public static final String NOTE_MODERATE_ID_EXTRA = "moderateNoteId";
     public static final String NOTE_MODERATE_STATUS_EXTRA = "moderateNoteStatus";
-    private static final int NOTE_DETAIL_REQUEST_CODE = 0;
+    public static final String NOTE_CURRENT_LIST_FILTER_EXTRA = "currentFilter";
 
-    private static final String KEY_INITIAL_UPDATE = "initialUpdate";
-    private static final String KEY_LIST_SCROLL_POSITION = "scrollPosition";
+    protected static final int TAB_COUNT = 5;
+    protected static final int TAB_POSITION_ALL = 0;
+    protected static final int TAB_POSITION_UNREAD = 1;
+    protected static final int TAB_POSITION_COMMENT = 2;
+    protected static final int TAB_POSITION_FOLLOW = 3;
+    protected static final int TAB_POSITION_LIKE = 4;
 
-    private SwipeToRefreshHelper mFauxSwipeToRefreshHelper;
-    private NotesAdapter mNotesAdapter;
-    private LinearLayoutManager mLinearLayoutManager;
-    private RecyclerView mRecyclerView;
-    private TextView mEmptyTextView;
+    private static final String KEY_LAST_TAB_POSITION = "lastTabPosition";
 
-    private int mRestoredScrollPosition;
-    private boolean mHasPerformedInitialUpdate;
+    private String mToolbarTitle;
+    private TabLayout mTabLayout;
+    private ViewGroup mConnectJetpackView;
+    private boolean mShouldRefreshNotifications;
+    private int mLastTabPosition;
 
-    private Bucket<Note> mBucket;
+    @Nullable private Toolbar mToolbar = null;
 
-    public NotificationsListFragment() {
-    }
+    @Inject AccountStore mAccountStore;
 
-    /**
-     * For responding to tapping of notes
-     */
-    public interface OnNoteClickListener {
-        public void onClickNote(String noteId);
-    }
-
-    @Override
-    public View onCreateView(@Nonnull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        View view = inflater.inflate(R.layout.notifications_fragment_notes_list, container, false);
-
-        mRecyclerView = (RecyclerView) view.findViewById(R.id.recycler_view_notes);
-        RecyclerView.ItemAnimator animator = new DefaultItemAnimator();
-        animator.setSupportsChangeAnimations(true);
-        mRecyclerView.setItemAnimator(animator);
-        mLinearLayoutManager = new LinearLayoutManager(getActivity());
-        mRecyclerView.setLayoutManager(mLinearLayoutManager);
-
-        // setup the initial notes adapter, starts listening to the bucket
-        mBucket = SimperiumUtils.getNotesBucket();
-        if (mBucket != null) {
-            if (mNotesAdapter == null) {
-                mNotesAdapter = new NotesAdapter(getActivity(), mBucket);
-                mNotesAdapter.setOnNoteClickListener(new OnNoteClickListener() {
-                    @Override
-                    public void onClickNote(String noteId) {
-                        if (TextUtils.isEmpty(noteId)) return;
-
-                        // open the latest version of this note just in case it has changed - this can
-                        // happen if the note was tapped from the list fragment after it was updated
-                        // by another fragment (such as NotificationCommentLikeFragment)
-                        openNote(noteId, getActivity(), false);
-                    }
-                });
-            }
-
-            mRecyclerView.setAdapter(mNotesAdapter);
-        } else {
-            ToastUtils.showToast(getActivity(), R.string.error_refresh_notifications);
-        }
-
-        mEmptyTextView = (TextView) view.findViewById(R.id.empty_view);
-
-        return view;
+    public static NotificationsListFragment newInstance() {
+        return new NotificationsListFragment();
     }
 
     @Override
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
 
-        initSwipeToRefreshHelper();
-
         if (savedInstanceState != null) {
-            mHasPerformedInitialUpdate = savedInstanceState.getBoolean(KEY_INITIAL_UPDATE, false);
-            setRestoredListPosition(savedInstanceState.getInt(KEY_LIST_SCROLL_POSITION, RecyclerView.NO_POSITION));
+            setSelectedTab(savedInstanceState.getInt(KEY_LAST_TAB_POSITION, TAB_POSITION_ALL));
         }
+    }
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        ((WordPress) requireActivity().getApplication()).component().inject(this);
+        mShouldRefreshNotifications = true;
+    }
+
+    @Override
+    public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+        View view = inflater.inflate(R.layout.notifications_list_fragment, container, false);
+
+        mConnectJetpackView = view.findViewById(R.id.connect_jetpack);
+        mToolbar = view.findViewById(R.id.toolbar_main);
+        mToolbar.setTitle(mToolbarTitle);
+        mTabLayout = view.findViewById(R.id.tab_layout);
+        mTabLayout.addOnTabSelectedListener(new OnTabSelectedListener() {
+            @Override
+            public void onTabSelected(Tab tab) {
+                Map<String, String> properties = new HashMap<>(1);
+
+                switch (tab.getPosition()) {
+                    case TAB_POSITION_ALL:
+                        properties.put(NOTIFICATIONS_SELECTED_FILTER, FILTERS.FILTER_ALL.toString());
+                        break;
+                    case TAB_POSITION_COMMENT:
+                        properties.put(NOTIFICATIONS_SELECTED_FILTER, FILTERS.FILTER_COMMENT.toString());
+                        break;
+                    case TAB_POSITION_FOLLOW:
+                        properties.put(NOTIFICATIONS_SELECTED_FILTER, FILTERS.FILTER_FOLLOW.toString());
+                        break;
+                    case TAB_POSITION_LIKE:
+                        properties.put(NOTIFICATIONS_SELECTED_FILTER, FILTERS.FILTER_LIKE.toString());
+                        break;
+                    case TAB_POSITION_UNREAD:
+                        properties.put(NOTIFICATIONS_SELECTED_FILTER, FILTERS.FILTER_UNREAD.toString());
+                        break;
+                    default:
+                        properties.put(NOTIFICATIONS_SELECTED_FILTER, FILTERS.FILTER_ALL.toString());
+                        break;
+                }
+
+                AnalyticsTracker.track(Stat.NOTIFICATION_TAPPED_SEGMENTED_CONTROL, properties);
+                mLastTabPosition = tab.getPosition();
+            }
+
+            @Override
+            public void onTabUnselected(Tab tab) {
+            }
+
+            @Override
+            public void onTabReselected(Tab tab) {
+            }
+        });
+
+        WPViewPager viewPager = view.findViewById(R.id.view_pager);
+        viewPager.setAdapter(new NotificationsFragmentAdapter(getChildFragmentManager()));
+        viewPager.setPageMargin(getResources().getDimensionPixelSize(R.dimen.margin_extra_large));
+        mTabLayout.setupWithViewPager(viewPager);
+
+        TextView jetpackTermsAndConditions = view.findViewById(R.id.jetpack_terms_and_conditions);
+        jetpackTermsAndConditions.setOnClickListener(new OnClickListener() {
+            @Override public void onClick(View view) {
+                WPWebViewActivity.openURL(requireContext(), WPUrlUtils.buildTermsOfServiceUrl(getContext()));
+            }
+        });
+
+        Button jetpackFaq = view.findViewById(R.id.jetpack_faq);
+        jetpackFaq.setOnClickListener(new OnClickListener() {
+            @Override public void onClick(View view) {
+                WPWebViewActivity.openURL(requireContext(), FAQ_URL);
+            }
+        });
+
+        return view;
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        mShouldRefreshNotifications = true;
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        refreshNotes();
+        EventBus.getDefault().post(new NotificationEvents.NotificationsUnseenStatus(false));
 
-        // start listening to bucket change events
-        if (mBucket != null) {
-            mBucket.addListener(this);
+        if (!mAccountStore.hasAccessToken()) {
+            showConnectJetpackView();
+            mTabLayout.setVisibility(View.GONE);
+        } else {
+            if (mShouldRefreshNotifications) {
+                fetchNotesFromRemote();
+            }
         }
 
-        // Remove notification if it is showing when we resume this activity.
-        NotificationManager notificationManager = (NotificationManager) getActivity().getSystemService(GCMIntentService.NOTIFICATION_SERVICE);
-        notificationManager.cancel(GCMIntentService.PUSH_NOTIFICATION_ID);
-
-        if (SimperiumUtils.isUserAuthorized()) {
-            SimperiumUtils.startBuckets();
-            AppLog.i(AppLog.T.NOTIFS, "Starting Simperium buckets");
-        }
+        setSelectedTab(mLastTabPosition);
     }
 
     @Override
-    public void onPause() {
-        // unregister the listener
-        if (mBucket != null) {
-            mBucket.removeListener(this);
-        }
-        super.onPause();
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        outState.putInt(KEY_LAST_TAB_POSITION, mLastTabPosition);
+        super.onSaveInstanceState(outState);
     }
 
     @Override
-    public void onStart() {
-        super.onStart();
-        if (isAdded() && !mHasPerformedInitialUpdate) {
-            mHasPerformedInitialUpdate = true;
-            ReaderAuthActions.updateCookies(getActivity());
+    public void setTitle(@NonNull String title) {
+        mToolbarTitle = title;
+
+        if (mToolbar != null) {
+            mToolbar.setTitle(mToolbarTitle);
         }
     }
 
-    @Override
-    public void onDestroy() {
-        // Close Simperium cursor
-        if (mNotesAdapter != null) {
-            mNotesAdapter.closeCursor();
+    private void clearToolbarScrollFlags() {
+        if (mToolbar != null && mToolbar.getLayoutParams() instanceof AppBarLayout.LayoutParams) {
+            AppBarLayout.LayoutParams params = (AppBarLayout.LayoutParams) mToolbar.getLayoutParams();
+            params.setScrollFlags(0);
+        }
+    }
+
+    private void fetchNotesFromRemote() {
+        if (!isAdded()) {
+            return;
         }
 
-        super.onDestroy();
+        if (!NetworkUtils.isNetworkAvailable(getActivity())) {
+            return;
+        }
+
+        NotificationsUpdateServiceStarter.startService(getActivity());
     }
 
-    private void initSwipeToRefreshHelper() {
-        mFauxSwipeToRefreshHelper = new SwipeToRefreshHelper(
-                getActivity(),
-                (SwipeRefreshLayout) getActivity().findViewById(R.id.ptr_layout),
-                new SwipeToRefreshHelper.RefreshListener() {
-                    @Override
-                    public void onRefreshStarted() {
-                        // Show a fake refresh animation for a few seconds
-                        new Handler().postDelayed(new Runnable() {
-                            @Override
-                            public void run() {
-                                if (isAdded()) {
-                                    mFauxSwipeToRefreshHelper.setRefreshing(false);
-                                }
-                            }
-                        }, 2000);
-                    }
-                });
+    private static Intent getOpenNoteIntent(Activity activity, String noteId) {
+        Intent detailIntent = new Intent(activity, NotificationsDetailActivity.class);
+        detailIntent.putExtra(NOTE_ID_EXTRA, noteId);
+        return detailIntent;
     }
 
-    /**
-     * Open a note fragment based on the type of note
-     */
-    public void openNote(final String noteId, Activity activity, boolean shouldShowKeyboard) {
+    public SiteModel getSelectedSite() {
+        if (getActivity() instanceof WPMainActivity) {
+            WPMainActivity mainActivity = (WPMainActivity) getActivity();
+            return mainActivity.getSelectedSite();
+        }
+
+        return null;
+    }
+
+    public static void openNoteForReply(Activity activity, String noteId, boolean shouldShowKeyboard, String replyText,
+                                        NotesAdapter.FILTERS filter, boolean isTappedFromPushNotification) {
         if (noteId == null || activity == null) {
             return;
         }
 
-        Intent detailIntent = new Intent(activity, NotificationsDetailActivity.class);
-        detailIntent.putExtra(NOTE_ID_EXTRA, noteId);
-        detailIntent.putExtra(NOTE_INSTANT_REPLY_EXTRA, shouldShowKeyboard);
-
-        ActivityOptionsCompat options = ActivityOptionsCompat.makeCustomAnimation(
-                activity,
-                R.anim.reader_activity_slide_in,
-                R.anim.reader_activity_scale_out);
-        ActivityCompat.startActivityForResult(activity, detailIntent, NOTE_DETAIL_REQUEST_CODE, options.toBundle());
-
-        AnalyticsTracker.track(AnalyticsTracker.Stat.NOTIFICATIONS_OPENED_NOTIFICATION_DETAILS);
-    }
-
-    private void setNoteIsHidden(String noteId, boolean isHidden) {
-        if (mNotesAdapter == null) return;
-
-        if (isHidden) {
-            mNotesAdapter.addHiddenNoteId(noteId);
-        } else {
-            // Scroll the row into view if it isn't visible so the animation can be seen
-            int notePosition = mNotesAdapter.getPositionForNote(noteId);
-            if (notePosition != RecyclerView.NO_POSITION &&
-                    mLinearLayoutManager.findFirstCompletelyVisibleItemPosition() > notePosition) {
-                mLinearLayoutManager.scrollToPosition(notePosition);
-            }
-
-            mNotesAdapter.removeHiddenNoteId(noteId);
-        }
-    }
-
-    private void setNoteIsModerating(String noteId, boolean isModerating) {
-        if (mNotesAdapter == null) return;
-
-        if (isModerating) {
-            mNotesAdapter.addModeratingNoteId(noteId);
-        } else {
-            mNotesAdapter.removeModeratingNoteId(noteId);
-        }
-    }
-
-    void updateLastSeenTime() {
-        // set the timestamp to now
-        try {
-            if (mNotesAdapter != null && mNotesAdapter.getCount() > 0 && SimperiumUtils.getMetaBucket() != null) {
-                Note newestNote = mNotesAdapter.getNote(0);
-                BucketObject meta = SimperiumUtils.getMetaBucket().get("meta");
-                if (meta != null && newestNote != null) {
-                    meta.setProperty("last_seen", newestNote.getTimestamp());
-                    meta.save();
-                }
-            }
-        } catch (BucketObjectMissingException e) {
-            // try again later, meta is created by wordpress.com
-        }
-    }
-
-    void refreshNotes() {
-        if (!isAdded() || mNotesAdapter == null) {
+        if (activity.isFinishing()) {
             return;
         }
 
-        getActivity().runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                mNotesAdapter.reloadNotes();
-                updateLastSeenTime();
+        Intent detailIntent = getOpenNoteIntent(activity, noteId);
+        detailIntent.putExtra(NOTE_INSTANT_REPLY_EXTRA, shouldShowKeyboard);
 
-                restoreListScrollPosition();
-
-                mEmptyTextView.setVisibility(mNotesAdapter.getCount() == 0 ? View.VISIBLE : View.GONE);
-            }
-        });
-    }
-
-    private void restoreListScrollPosition() {
-        if (isAdded() && mRecyclerView != null && mRestoredScrollPosition != RecyclerView.NO_POSITION
-                && mRestoredScrollPosition < mNotesAdapter.getCount()) {
-            // Restore scroll position in list
-            mLinearLayoutManager.scrollToPosition(mRestoredScrollPosition);
-            mRestoredScrollPosition = RecyclerView.NO_POSITION;
-        }
-    }
-
-    @Override
-    public void onSaveInstanceState(@Nonnull Bundle outState) {
-        if (outState.isEmpty()) {
-            outState.putBoolean("bug_19917_fix", true);
+        if (!TextUtils.isEmpty(replyText)) {
+            detailIntent.putExtra(NOTE_PREFILLED_REPLY_EXTRA, replyText);
         }
 
-        outState.putBoolean(KEY_INITIAL_UPDATE, mHasPerformedInitialUpdate);
-
-        // Save list view scroll position
-        outState.putInt(KEY_LIST_SCROLL_POSITION, getScrollPosition());
-
-        super.onSaveInstanceState(outState);
+        detailIntent.putExtra(NOTE_CURRENT_LIST_FILTER_EXTRA, filter);
+        detailIntent.putExtra(IS_TAPPED_ON_NOTIFICATION, isTappedFromPushNotification);
+        openNoteForReplyWithParams(detailIntent, activity);
     }
 
-    private int getScrollPosition() {
-        if (!isAdded() || mRecyclerView == null) {
-            return RecyclerView.NO_POSITION;
-        }
-
-        return mLinearLayoutManager.findFirstVisibleItemPosition();
+    private static void openNoteForReplyWithParams(Intent detailIntent, Activity activity) {
+        activity.startActivityForResult(detailIntent, RequestCodes.NOTE_DETAIL);
     }
 
-    private void setRestoredListPosition(int listPosition) {
-        mRestoredScrollPosition = listPosition;
-    }
+    private void setSelectedTab(int position) {
+        mLastTabPosition = position;
 
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == NOTE_DETAIL_REQUEST_CODE && resultCode == Activity.RESULT_OK && data != null) {
-            if (SimperiumUtils.getNotesBucket() == null) return;
+        if (mTabLayout != null) {
+            TabLayout.Tab tab = mTabLayout.getTabAt(mLastTabPosition);
 
-            try {
-                Note note = SimperiumUtils.getNotesBucket().get(StringUtils.notNullStr(data.getStringExtra(NOTE_MODERATE_ID_EXTRA)));
-                CommentStatus commentStatus = CommentStatus.fromString(data.getStringExtra(NOTE_MODERATE_STATUS_EXTRA));
-                moderateCommentForNote(note, commentStatus);
-            } catch (BucketObjectMissingException e) {
-                e.printStackTrace();
+            if (tab != null) {
+                tab.select();
             }
         }
-
-        super.onActivityResult(requestCode, resultCode, data);
     }
 
-    private void moderateCommentForNote(final Note note, final CommentStatus newStatus) {
-        if (!isAdded()) return;
+    private void showConnectJetpackView() {
+        if (isAdded() && mConnectJetpackView != null) {
+            mConnectJetpackView.setVisibility(View.VISIBLE);
+            mTabLayout.setVisibility(View.GONE);
+            clearToolbarScrollFlags();
 
-        if (newStatus == CommentStatus.APPROVED || newStatus == CommentStatus.UNAPPROVED) {
-            note.setLocalStatus(CommentStatus.toRESTString(newStatus));
-            note.save();
-            setNoteIsModerating(note.getId(), true);
-            CommentActions.moderateCommentForNote(note, newStatus,
-                    new CommentActions.CommentActionListener() {
-                        @Override
-                        public void onActionResult(boolean succeeded) {
-                            if (!isAdded()) return;
-
-                            setNoteIsModerating(note.getId(), false);
-
-                            if (!succeeded) {
-                                note.setLocalStatus(null);
-                                note.save();
-                                ToastUtils.showToast(getActivity(),
-                                        R.string.error_moderate_comment,
-                                        ToastUtils.Duration.LONG
-                                );
-                            }
-                        }
-                    });
-        } else if (newStatus == CommentStatus.TRASH || newStatus == CommentStatus.SPAM) {
-            setNoteIsHidden(note.getId(), true);
-            // Show undo bar for trash or spam actions
-            new UndoBarController.UndoBar(getActivity())
-                    .message(newStatus == CommentStatus.TRASH ? R.string.comment_trashed : R.string.comment_spammed)
-                    .listener(new UndoBarController.AdvancedUndoListener() {
-                        @Override
-                        public void onHide(Parcelable parcelable) {
-                            // Deleted notifications in Simperium never come back, so we won't
-                            // make the request until the undo bar fades away
-                            CommentActions.moderateCommentForNote(note, newStatus,
-                                    new CommentActions.CommentActionListener() {
-                                        @Override
-                                        public void onActionResult(boolean succeeded) {
-                                            if (!isAdded()) return;
-
-                                            if (!succeeded) {
-                                                setNoteIsHidden(note.getId(), false);
-                                                ToastUtils.showToast(getActivity(),
-                                                        R.string.error_moderate_comment,
-                                                        ToastUtils.Duration.LONG
-                                                );
-                                            }
-                                        }
-                                    });
-                        }
-
-                        @Override
-                        public void onClear(@Nonnull Parcelable[] token) {
-                            //noop
-                        }
-
-                        @Override
-                        public void onUndo(Parcelable parcelable) {
-                            setNoteIsHidden(note.getId(), false);
-                        }
-                    }).show();
-        }
-    }
-
-    /**
-     * Simperium bucket listener methods
-     */
-    @Override
-    public void onSaveObject(Bucket<Note> bucket, final Note object) {
-        refreshNotes();
-    }
-
-    @Override
-    public void onDeleteObject(Bucket<Note> bucket, final Note object) {
-        refreshNotes();
-    }
-
-    @Override
-    public void onNetworkChange(Bucket<Note> bucket, final Bucket.ChangeType type, final String key) {
-        // Reset the note's local status when a remote change is received
-        if (type == Bucket.ChangeType.MODIFY) {
-            try {
-                Note note = bucket.get(key);
-                if (note.isCommentType()) {
-                    note.setLocalStatus(null);
-                    note.save();
+            Button setupButton = mConnectJetpackView.findViewById(R.id.jetpack_setup);
+            setupButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    SiteModel siteModel = getSelectedSite();
+                    JetpackConnectionWebViewActivity
+                            .startJetpackConnectionFlow(getActivity(), NOTIFICATIONS, siteModel, false);
                 }
-            } catch (BucketObjectMissingException e) {
-                AppLog.e(AppLog.T.NOTIFS, "Could not create note after receiving change.");
+            });
+        }
+    }
+
+    private class NotificationsFragmentAdapter extends FragmentPagerAdapter {
+        NotificationsFragmentAdapter(FragmentManager fragmentManager) {
+            super(fragmentManager);
+        }
+
+        @Override
+        public int getCount() {
+            return TAB_COUNT;
+        }
+
+        @Override
+        public Fragment getItem(int position) {
+            return NotificationsListFragmentPage.newInstance(position);
+        }
+
+        @Nullable
+        @Override
+        public CharSequence getPageTitle(int position) {
+            switch (position) {
+                case TAB_POSITION_ALL:
+                    return getString(R.string.notifications_tab_title_all);
+                case TAB_POSITION_COMMENT:
+                    return getString(R.string.notifications_tab_title_comments);
+                case TAB_POSITION_FOLLOW:
+                    return getString(R.string.notifications_tab_title_follows);
+                case TAB_POSITION_LIKE:
+                    return getString(R.string.notifications_tab_title_likes);
+                case TAB_POSITION_UNREAD:
+                    return getString(R.string.notifications_tab_title_unread);
+                default:
+                    return super.getPageTitle(position);
             }
         }
 
-        refreshNotes();
-    }
-
-    @Override
-    public void onBeforeUpdateObject(Bucket<Note> noteBucket, Note note) {
-        //noop
+        @Override
+        public void restoreState(Parcelable state, ClassLoader loader) {
+            try {
+                super.restoreState(state, loader);
+            } catch (IllegalStateException exception) {
+                AppLog.e(T.NOTIFS, exception);
+            }
+        }
     }
 }

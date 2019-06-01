@@ -18,26 +18,29 @@ import org.wordpress.android.util.SqlUtils;
 import java.util.Date;
 
 /**
- *  tbl_tags stores the list of tags the user subscribed to or has by default
- *  tbl_tags_recommended stores the list of recommended tags returned by the api
+ * tbl_tags stores the list of tags the user subscribed to or has by default
+ * tbl_tags_recommended stores the list of recommended tags returned by the api
  */
 public class ReaderTagTable {
-
     protected static void createTables(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE tbl_tags ("
-                 + "	tag_name     TEXT COLLATE NOCASE,"
-                 + "    tag_type     INTEGER DEFAULT 0,"
-                 + "    endpoint     TEXT,"
-                + " 	date_updated TEXT,"
-                 + "    PRIMARY KEY (tag_name, tag_type)"
-                 + ")");
+                   + " tag_slug TEXT COLLATE NOCASE,"
+                   + " tag_display_name TEXT COLLATE NOCASE,"
+                   + " tag_title TEXT COLLATE NOCASE,"
+                   + " tag_type INTEGER DEFAULT 0,"
+                   + " endpoint TEXT,"
+                   + " date_updated TEXT,"
+                   + " PRIMARY KEY (tag_slug, tag_type)"
+                   + ")");
 
         db.execSQL("CREATE TABLE tbl_tags_recommended ("
-                 + "	tag_name	TEXT COLLATE NOCASE,"
-                 + "    tag_type    INTEGER DEFAULT 0,"
-                 + "    endpoint    TEXT,"
-                 + "    PRIMARY KEY (tag_name, tag_type)"
-                 + ")");
+                   + " tag_slug TEXT COLLATE NOCASE,"
+                   + " tag_display_name TEXT COLLATE NOCASE,"
+                   + " tag_title TEXT COLLATE NOCASE,"
+                   + " tag_type INTEGER DEFAULT 0,"
+                   + " endpoint TEXT,"
+                   + " PRIMARY KEY (tag_slug, tag_type)"
+                   + ")");
     }
 
     protected static void dropTables(SQLiteDatabase db) {
@@ -76,6 +79,31 @@ public class ReaderTagTable {
         }
     }
 
+    /*
+     * similar to the above but only replaces followed tags
+     */
+    public static void replaceFollowedTags(ReaderTagList tags) {
+        if (tags == null || tags.size() == 0) {
+            return;
+        }
+
+        SQLiteDatabase db = ReaderDatabase.getWritableDb();
+        db.beginTransaction();
+        try {
+            try {
+                // first delete all existing followed tags, then insert the passed ones
+                String[] args = {Integer.toString(ReaderTagType.FOLLOWED.toInt())};
+                db.execSQL("DELETE FROM tbl_tags WHERE tag_type=?", args);
+                addOrUpdateTags(tags);
+                db.setTransactionSuccessful();
+            } catch (SQLException e) {
+                AppLog.e(T.READER, e);
+            }
+        } finally {
+            db.endTransaction();
+        }
+    }
+
     public static void addOrUpdateTag(ReaderTag tag) {
         if (tag == null) {
             return;
@@ -92,16 +120,17 @@ public class ReaderTagTable {
         SQLiteStatement stmt = null;
         try {
             stmt = ReaderDatabase.getWritableDb().compileStatement(
-                    "INSERT OR REPLACE INTO tbl_tags (tag_name, tag_type, endpoint) VALUES (?1,?2,?3)"
-            );
+                    "INSERT OR REPLACE INTO tbl_tags (tag_slug, tag_display_name, tag_title, tag_type, endpoint) "
+                    + "VALUES (?1,?2,?3,?4,?5)");
 
-            for (ReaderTag tag: tagList) {
-                stmt.bindString(1, tag.getTagName());
-                stmt.bindLong  (2, tag.tagType.toInt());
-                stmt.bindString(3, tag.getEndpoint());
+            for (ReaderTag tag : tagList) {
+                stmt.bindString(1, tag.getTagSlug());
+                stmt.bindString(2, tag.getTagDisplayName());
+                stmt.bindString(3, tag.getTagTitle());
+                stmt.bindLong(4, tag.tagType.toInt());
+                stmt.bindString(5, tag.getEndpoint());
                 stmt.execute();
             }
-
         } finally {
             SqlUtils.closeStatement(stmt);
         }
@@ -114,32 +143,28 @@ public class ReaderTagTable {
         if (tag == null) {
             return false;
         }
-        String[] args = {tag.getTagName(), Integer.toString(tag.tagType.toInt())};
+        String[] args = {tag.getTagSlug(), Integer.toString(tag.tagType.toInt())};
         return SqlUtils.boolForQuery(ReaderDatabase.getReadableDb(),
-                "SELECT 1 FROM tbl_tags WHERE tag_name=?1 AND tag_type=?2",
-                args);
+                                     "SELECT 1 FROM tbl_tags WHERE tag_slug=?1 AND tag_type=?2",
+                                     args);
     }
 
     /*
      * returns true if the passed tag exists and it has the passed type
      */
-    private static boolean tagExistsOfType(String tagName, ReaderTagType tagType) {
-        if (TextUtils.isEmpty(tagName) || tagType == null) {
+    private static boolean tagExistsOfType(String tagSlug, ReaderTagType tagType) {
+        if (TextUtils.isEmpty(tagSlug) || tagType == null) {
             return false;
         }
 
-        String[] args = {tagName, Integer.toString(tagType.toInt())};
+        String[] args = {tagSlug, Integer.toString(tagType.toInt())};
         return SqlUtils.boolForQuery(ReaderDatabase.getReadableDb(),
-                "SELECT 1 FROM tbl_tags WHERE tag_name=?1 AND tag_type=?2",
-                args);
+                                     "SELECT 1 FROM tbl_tags WHERE tag_slug=?1 AND tag_type=?2",
+                                     args);
     }
 
-    public static boolean isFollowedTagName(String tagName) {
-        return tagExistsOfType(tagName, ReaderTagType.FOLLOWED);
-    }
-
-    public static boolean isDefaultTagName(String tagName) {
-        return tagExistsOfType(tagName, ReaderTagType.DEFAULT);
+    public static boolean isFollowedTagName(String tagSlug) {
+        return tagExistsOfType(tagSlug, ReaderTagType.FOLLOWED);
     }
 
     private static ReaderTag getTagFromCursor(Cursor c) {
@@ -147,20 +172,23 @@ public class ReaderTagTable {
             throw new IllegalArgumentException("null tag cursor");
         }
 
-        String tagName = c.getString(c.getColumnIndex("tag_name"));
+        String tagSlug = c.getString(c.getColumnIndex("tag_slug"));
+        String tagDisplayName = c.getString(c.getColumnIndex("tag_display_name"));
+        String tagTitle = c.getString(c.getColumnIndex("tag_title"));
         String endpoint = c.getString(c.getColumnIndex("endpoint"));
         ReaderTagType tagType = ReaderTagType.fromInt(c.getInt(c.getColumnIndex("tag_type")));
 
-        return new ReaderTag(tagName, endpoint, tagType);
+        return new ReaderTag(tagSlug, tagDisplayName, tagTitle, endpoint, tagType);
     }
 
-    public static ReaderTag getTag(String tagName, ReaderTagType tagType) {
-        if (TextUtils.isEmpty(tagName)) {
+    public static ReaderTag getTag(String tagSlug, ReaderTagType tagType) {
+        if (TextUtils.isEmpty(tagSlug)) {
             return null;
         }
 
-        String[] args = {tagName, Integer.toString(tagType.toInt())};
-        Cursor c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags WHERE tag_name=? AND tag_type=? LIMIT 1", args);
+        String[] args = {tagSlug, Integer.toString(tagType.toInt())};
+        Cursor c = ReaderDatabase.getReadableDb()
+                                 .rawQuery("SELECT * FROM tbl_tags WHERE tag_slug=? AND tag_type=? LIMIT 1", args);
         try {
             if (!c.moveToFirst()) {
                 return null;
@@ -171,14 +199,30 @@ public class ReaderTagTable {
         }
     }
 
+    public static ReaderTag getTagFromEndpoint(String endpoint) {
+        if (TextUtils.isEmpty(endpoint)) {
+            return null;
+        }
+
+        String[] args = {"%" + endpoint};
+        String query = "SELECT * FROM tbl_tags WHERE endpoint LIKE ? LIMIT 1";
+        Cursor cursor = ReaderDatabase.getReadableDb().rawQuery(query, args);
+
+        try {
+            return cursor.moveToFirst() ? getTagFromCursor(cursor) : null;
+        } finally {
+            SqlUtils.closeCursor(cursor);
+        }
+    }
+
     public static String getEndpointForTag(ReaderTag tag) {
         if (tag == null) {
             return null;
         }
-        String[] args = {tag.getTagName(), Integer.toString(tag.tagType.toInt())};
+        String[] args = {tag.getTagSlug(), Integer.toString(tag.tagType.toInt())};
         return SqlUtils.stringForQuery(ReaderDatabase.getReadableDb(),
-               "SELECT endpoint FROM tbl_tags WHERE tag_name=? AND tag_type=?",
-               args);
+                                       "SELECT endpoint FROM tbl_tags WHERE tag_slug=? AND tag_type=?",
+                                       args);
     }
 
     public static ReaderTagList getDefaultTags() {
@@ -189,9 +233,18 @@ public class ReaderTagTable {
         return getTagsOfType(ReaderTagType.FOLLOWED);
     }
 
+    public static ReaderTagList getCustomListTags() {
+        return getTagsOfType(ReaderTagType.CUSTOM_LIST);
+    }
+
+    public static ReaderTagList getBookmarkTags() {
+        return getTagsOfType(ReaderTagType.BOOKMARKED);
+    }
+
     private static ReaderTagList getTagsOfType(ReaderTagType tagType) {
         String[] args = {Integer.toString(tagType.toInt())};
-        Cursor c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags WHERE tag_type=? ORDER BY tag_name", args);
+        Cursor c = ReaderDatabase.getReadableDb()
+                                 .rawQuery("SELECT * FROM tbl_tags WHERE tag_type=? ORDER BY tag_slug", args);
         try {
             ReaderTagList tagList = new ReaderTagList();
             if (c.moveToFirst()) {
@@ -206,7 +259,7 @@ public class ReaderTagTable {
     }
 
     static ReaderTagList getAllTags() {
-        Cursor c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags ORDER BY tag_name", null);
+        Cursor c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags ORDER BY tag_slug", null);
         try {
             ReaderTagList tagList = new ReaderTagList();
             if (c.moveToFirst()) {
@@ -220,12 +273,24 @@ public class ReaderTagTable {
         }
     }
 
+    public static ReaderTag getFirstTag() {
+        Cursor c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags ORDER BY tag_slug LIMIT 1", null);
+        try {
+            if (c.moveToFirst()) {
+                return getTagFromCursor(c);
+            }
+            return null;
+        } finally {
+            SqlUtils.closeCursor(c);
+        }
+    }
+
     public static void deleteTag(ReaderTag tag) {
         if (tag == null) {
             return;
         }
-        String[] args = {tag.getTagName(), Integer.toString(tag.tagType.toInt())};
-        ReaderDatabase.getWritableDb().delete("tbl_tags", "tag_name=? AND tag_type=?", args);
+        String[] args = {tag.getTagSlug(), Integer.toString(tag.tagType.toInt())};
+        ReaderDatabase.getWritableDb().delete("tbl_tags", "tag_slug=? AND tag_type=?", args);
     }
 
 
@@ -233,24 +298,24 @@ public class ReaderTagTable {
         if (tag == null) {
             return "";
         }
-        String[] args = {tag.getTagName(), Integer.toString(tag.tagType.toInt())};
+        String[] args = {tag.getTagSlug(), Integer.toString(tag.tagType.toInt())};
         return SqlUtils.stringForQuery(ReaderDatabase.getReadableDb(),
-                "SELECT date_updated FROM tbl_tags WHERE tag_name=? AND tag_type=?",
-                args);
+                                       "SELECT date_updated FROM tbl_tags WHERE tag_slug=? AND tag_type=?",
+                                       args);
     }
 
     public static void setTagLastUpdated(ReaderTag tag) {
-       if (tag == null) {
+        if (tag == null) {
             return;
         }
 
-        String date = DateTimeUtils.javaDateToIso8601(new Date());
-        String sql = "UPDATE tbl_tags SET date_updated=?1 WHERE tag_name=?2 AND tag_type=?3";
+        String date = DateTimeUtils.iso8601FromDate(new Date());
+        String sql = "UPDATE tbl_tags SET date_updated=?1 WHERE tag_slug=?2 AND tag_type=?3";
         SQLiteStatement stmt = ReaderDatabase.getWritableDb().compileStatement(sql);
         try {
             stmt.bindString(1, date);
-            stmt.bindString(2, tag.getTagName());
-            stmt.bindLong  (3, tag.tagType.toInt());
+            stmt.bindString(2, tag.getTagSlug());
+            stmt.bindLong(3, tag.tagType.toInt());
             stmt.execute();
         } finally {
             SqlUtils.closeStatement(stmt);
@@ -269,6 +334,7 @@ public class ReaderTagTable {
     }
 
     private static final int NEVER_UPDATED = -1;
+
     private static int minutesSinceLastUpdate(ReaderTag tag) {
         if (tag == null) {
             return 0;
@@ -279,7 +345,7 @@ public class ReaderTagTable {
             return NEVER_UPDATED;
         }
 
-        Date dtUpdated = DateTimeUtils.iso8601ToJavaDate(updated);
+        Date dtUpdated = DateTimeUtils.dateFromIso8601(updated);
         if (dtUpdated == null) {
             return 0;
         }
@@ -294,9 +360,11 @@ public class ReaderTagTable {
     public static ReaderTagList getRecommendedTags(boolean excludeSubscribed) {
         Cursor c;
         if (excludeSubscribed) {
-            c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags_recommended WHERE tag_name NOT IN (SELECT tag_name FROM tbl_tags) ORDER BY tag_name", null);
+            c = ReaderDatabase.getReadableDb().rawQuery(
+                    "SELECT * FROM tbl_tags_recommended WHERE tag_slug NOT IN (SELECT tag_slug FROM tbl_tags) "
+                    + "ORDER BY tag_slug", null);
         } else {
-            c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags_recommended ORDER BY tag_name", null);
+            c = ReaderDatabase.getReadableDb().rawQuery("SELECT * FROM tbl_tags_recommended ORDER BY tag_slug", null);
         }
         try {
             ReaderTagList tagList = new ReaderTagList();
@@ -317,8 +385,8 @@ public class ReaderTagTable {
         }
 
         SQLiteDatabase db = ReaderDatabase.getWritableDb();
-        SQLiteStatement stmt = db.compileStatement
-                ("INSERT INTO tbl_tags_recommended (tag_name, tag_type, endpoint) VALUES (?1,?2,?3)");
+        SQLiteStatement stmt = db.compileStatement("INSERT INTO tbl_tags_recommended (tag_slug, tag_display_name, "
+                                                   + "tag_title, tag_type, endpoint) VALUES (?1,?2,?3,?4,?5)");
         db.beginTransaction();
         try {
             try {
@@ -326,15 +394,16 @@ public class ReaderTagTable {
                 db.execSQL("DELETE FROM tbl_tags_recommended");
 
                 // then insert the passed ones
-                for (ReaderTag tag: tagList) {
-                    stmt.bindString(1, tag.getTagName());
-                    stmt.bindLong  (2, tag.tagType.toInt());
-                    stmt.bindString(3, tag.getEndpoint());
+                for (ReaderTag tag : tagList) {
+                    stmt.bindString(1, tag.getTagSlug());
+                    stmt.bindString(2, tag.getTagDisplayName());
+                    stmt.bindString(3, tag.getTagTitle());
+                    stmt.bindLong(4, tag.tagType.toInt());
+                    stmt.bindString(5, tag.getEndpoint());
                     stmt.execute();
                 }
 
                 db.setTransactionSuccessful();
-
             } catch (SQLException e) {
                 AppLog.e(T.READER, e);
             }

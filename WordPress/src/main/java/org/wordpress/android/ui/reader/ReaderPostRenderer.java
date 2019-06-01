@@ -4,10 +4,13 @@ import android.annotation.SuppressLint;
 import android.net.Uri;
 import android.os.Handler;
 
+import org.wordpress.android.R;
 import org.wordpress.android.WordPress;
 import org.wordpress.android.models.ReaderPost;
+import org.wordpress.android.models.ReaderPostDiscoverData;
 import org.wordpress.android.ui.reader.utils.ImageSizeMap;
 import org.wordpress.android.ui.reader.utils.ImageSizeMap.ImageSize;
+import org.wordpress.android.ui.reader.utils.ReaderEmbedScanner;
 import org.wordpress.android.ui.reader.utils.ReaderHtmlUtils;
 import org.wordpress.android.ui.reader.utils.ReaderIframeScanner;
 import org.wordpress.android.ui.reader.utils.ReaderImageScanner;
@@ -19,18 +22,23 @@ import org.wordpress.android.util.PhotonUtils;
 import org.wordpress.android.util.StringUtils;
 
 import java.lang.ref.WeakReference;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * generates and displays the HTML for post detail content - main purpose is to assign the
  * height/width attributes on image tags to (1) avoid the webView resizing as images are
  * loaded, and (2) avoid requesting images at a size larger than the display
- *
+ * <p>
  * important to note that displayed images rely on dp rather than px sizes due to the
  * fact that WebView "converts CSS pixel values to density-independent pixel values"
  * http://developer.android.com/guide/webapps/targeting.html
  */
-class ReaderPostRenderer {
-
+public class ReaderPostRenderer {
     private final ReaderResourceVars mResourceVars;
     private final ReaderPost mPost;
     private final int mMinFullSizeWidthDp;
@@ -42,7 +50,7 @@ class ReaderPostRenderer {
     private ImageSizeMap mAttachmentSizes;
 
     @SuppressLint("SetJavaScriptEnabled")
-    ReaderPostRenderer(ReaderWebView webView, ReaderPost post) {
+    public ReaderPostRenderer(ReaderWebView webView, ReaderPost post) {
         if (webView == null) {
             throw new IllegalArgumentException("ReaderPostRenderer requires a webView");
         }
@@ -51,28 +59,42 @@ class ReaderPostRenderer {
         }
 
         mPost = post;
-        mWeakWebView = new WeakReference<ReaderWebView>(webView);
+        mWeakWebView = new WeakReference<>(webView);
         mResourceVars = new ReaderResourceVars(webView.getContext());
 
-        mMinFullSizeWidthDp = pxToDp(mResourceVars.fullSizeImageWidthPx / 3);
+        mMinFullSizeWidthDp = pxToDp(mResourceVars.mFullSizeImageWidthPx / 3);
         mMinMidSizeWidthDp = mMinFullSizeWidthDp / 2;
 
-        // enable JavaScript in the webView if it's safe to do so, otherwise videos
-        // and other embedded content won't work
-        webView.getSettings().setJavaScriptEnabled(canEnableJavaScript());
+        // enable JavaScript in the webView, otherwise videos and other embedded content won't
+        // work - note that the content is scrubbed on the backend so this is considered safe
+        webView.getSettings().setJavaScriptEnabled(true);
     }
 
-    void beginRender() {
+    public void beginRender() {
         final Handler handler = new Handler();
         mRenderBuilder = new StringBuilder(getPostContent());
 
         new Thread() {
             @Override
             public void run() {
-                resizeImages();
+                final boolean hasTiledGallery = hasTiledGallery(mRenderBuilder.toString());
+
+                if (!(hasTiledGallery && mResourceVars.mIsWideDisplay)) {
+                    resizeImages();
+                }
+
                 resizeIframes();
 
-                final String htmlContent = formatPostContentForWebView(mRenderBuilder.toString());
+                // Get the set of JS scripts to inject in our Webview to support some specific Embeds.
+                Set<String> jsToInject = injectJSForSpecificEmbedSupport();
+
+                final String htmlContent =
+                        formatPostContentForWebView(
+                                mRenderBuilder.toString(),
+                                jsToInject,
+                                hasTiledGallery,
+                                mResourceVars.mIsWideDisplay);
+
                 mRenderBuilder = null;
                 handler.post(new Runnable() {
                     @Override
@@ -84,40 +106,55 @@ class ReaderPostRenderer {
         }.start();
     }
 
+    public static boolean hasTiledGallery(String text) {
+        // determine whether a tiled-gallery exists in the content
+        return Pattern.compile("tiled-gallery[\\s\"']").matcher(text).find();
+    }
+
     /*
      * scan the content for images and make sure they're correctly sized for the device
      */
-    void resizeImages() {
+    private void resizeImages() {
         ReaderHtmlUtils.HtmlScannerListener imageListener = new ReaderHtmlUtils.HtmlScannerListener() {
             @Override
-            public void onTagFound(String imageTag, String imageUrl, int start, int end) {
-                replaceImageTag(imageTag, imageUrl);
-            }
-            @Override
-            public void onScanCompleted() {
-                // nop
+            public void onTagFound(String imageTag, String imageUrl) {
+                if (!imageUrl.contains("wpcom-smileys")) {
+                    replaceImageTag(imageTag, imageUrl);
+                }
             }
         };
-        ReaderImageScanner scanner = new ReaderImageScanner(mRenderBuilder.toString(), mPost.isPrivate);
+        String content = mRenderBuilder.toString();
+        ReaderImageScanner scanner = new ReaderImageScanner(content, mPost.isPrivate);
         scanner.beginScan(imageListener);
     }
 
     /*
      * scan the content for iframes and make sure they're correctly sized for the device
      */
-    void resizeIframes() {
+    private void resizeIframes() {
         ReaderHtmlUtils.HtmlScannerListener iframeListener = new ReaderHtmlUtils.HtmlScannerListener() {
             @Override
-            public void onTagFound(String tag, String src, int start, int end) {
+            public void onTagFound(String tag, String src) {
                 replaceIframeTag(tag, src);
             }
+        };
+        String content = mRenderBuilder.toString();
+        ReaderIframeScanner scanner = new ReaderIframeScanner(content);
+        scanner.beginScan(iframeListener);
+    }
+
+    private Set<String> injectJSForSpecificEmbedSupport() {
+        final Set<String> jsToInject = new HashSet<>();
+        ReaderHtmlUtils.HtmlScannerListener embedListener = new ReaderHtmlUtils.HtmlScannerListener() {
             @Override
-            public void onScanCompleted() {
-                // nop
+            public void onTagFound(String tag, String src) {
+                jsToInject.add(src);
             }
         };
-        ReaderIframeScanner scanner = new ReaderIframeScanner(mRenderBuilder.toString());
-        scanner.beginScan(iframeListener);
+        String content = mRenderBuilder.toString();
+        ReaderEmbedScanner scanner = new ReaderEmbedScanner(content);
+        scanner.beginScan(embedListener);
+        return jsToInject;
     }
 
     /*
@@ -150,8 +187,8 @@ class ReaderPostRenderer {
         boolean hasWidth = (origSize != null && origSize.width > 0);
         boolean isFullSize = hasWidth && (origSize.width >= mMinFullSizeWidthDp);
         boolean isMidSize = hasWidth
-                && (origSize.width >= mMinMidSizeWidthDp)
-                && (origSize.width < mMinFullSizeWidthDp);
+                            && (origSize.width >= mMinMidSizeWidthDp)
+                            && (origSize.width < mMinFullSizeWidthDp);
 
         final String newImageTag;
         if (isFullSize) {
@@ -176,16 +213,14 @@ class ReaderPostRenderer {
     private String makeImageTag(final String imageUrl, int width, int height, final String imageClass) {
         String newImageUrl = ReaderUtils.getResizedImageUrl(imageUrl, width, height, mPost.isPrivate);
         if (height > 0) {
-            return new StringBuilder("<img class='").append(imageClass).append("'")
-                    .append(" src='").append(newImageUrl).append("'")
-                    .append(" width='").append(pxToDp(width)).append("'")
-                    .append(" height='").append(pxToDp(height)).append("' />")
-                    .toString();
+            return "<img class='" + imageClass + "'"
+                   + " src='" + newImageUrl + "'"
+                   + " width='" + pxToDp(width) + "'"
+                   + " height='" + pxToDp(height) + "' />";
         } else {
-            return new StringBuilder("<img class='").append(imageClass).append("'")
-                    .append( "src='").append(newImageUrl).append("'")
-                    .append(" width='").append(pxToDp(width)).append("' />")
-                    .toString();
+            return "<img class='" + imageClass + "'"
+                   + "src='" + newImageUrl + "'"
+                   + " width='" + pxToDp(width) + "' />";
         }
     }
 
@@ -194,16 +229,17 @@ class ReaderPostRenderer {
         int newHeight;
         if (width > 0 && height > 0) {
             if (height > width) {
-                newHeight = mResourceVars.fullSizeImageWidthPx;
+                //noinspection SuspiciousNameCombination
+                newHeight = mResourceVars.mFullSizeImageWidthPx;
                 float ratio = ((float) width / (float) height);
                 newWidth = (int) (newHeight * ratio);
             } else {
                 float ratio = ((float) height / (float) width);
-                newWidth = mResourceVars.fullSizeImageWidthPx;
+                newWidth = mResourceVars.mFullSizeImageWidthPx;
                 newHeight = (int) (newWidth * ratio);
             }
         } else {
-            newWidth = mResourceVars.fullSizeImageWidthPx;
+            newWidth = mResourceVars.mFullSizeImageWidthPx;
             newHeight = 0;
         }
 
@@ -217,20 +253,41 @@ class ReaderPostRenderer {
      */
     private boolean shouldAddFeaturedImage() {
         return mPost.hasFeaturedImage()
-            && !mPost.getText().contains("<img")
-            && !PhotonUtils.isMshotsUrl(mPost.getFeaturedImage());
+               && !mPost.getText().contains("<img")
+               && !PhotonUtils.isMshotsUrl(mPost.getFeaturedImage());
     }
 
     /*
      * returns the basic content of the post tweaked for use here
      */
     private String getPostContent() {
+        String content = mPost.shouldShowExcerpt() ? mPost.getExcerpt() : mPost.getText();
+
         // some content (such as Vimeo embeds) don't have "http:" before links
-        String content = mPost.getText().replace("src=\"//", "src=\"http://");
+        content = content.replace("src=\"//", "src=\"http://");
+
+        // add the featured image (if any)
         if (shouldAddFeaturedImage()) {
             AppLog.d(AppLog.T.READER, "reader renderer > added featured image");
             content = getFeaturedImageHtml() + content;
         }
+
+        // if this is a Discover post, add a link which shows the blog preview
+        if (mPost.isDiscoverPost()) {
+            ReaderPostDiscoverData discoverData = mPost.getDiscoverData();
+            if (discoverData != null && discoverData.getBlogId() != 0 && discoverData.hasBlogName()) {
+                String label = String.format(
+                        WordPress.getContext().getString(R.string.reader_discover_visit_blog),
+                        discoverData.getBlogName());
+                String url = ReaderUtils.makeBlogPreviewUrl(discoverData.getBlogId());
+
+                String htmlDiscover = "<div id='discover'>"
+                                      + "<a href='" + url + "'>" + label + "</a>"
+                                      + "</div>";
+                content += htmlDiscover;
+            }
+        }
+
         return content;
     }
 
@@ -247,8 +304,8 @@ class ReaderPostRenderer {
     private String getFeaturedImageHtml() {
         String imageUrl = ReaderUtils.getResizedImageUrl(
                 mPost.getFeaturedImage(),
-                mResourceVars.fullSizeImageWidthPx,
-                mResourceVars.featuredImageHeightPx,
+                mResourceVars.mFullSizeImageWidthPx,
+                mResourceVars.mFeaturedImageHeightPx,
                 mPost.isPrivate);
 
         return "<img class='size-full' src='" + imageUrl + "'/>";
@@ -265,18 +322,17 @@ class ReaderPostRenderer {
         int newWidth;
         if (width > 0 && height > 0) {
             float ratio = ((float) height / (float) width);
-            newWidth = mResourceVars.videoWidthPx;
+            newWidth = mResourceVars.mVideoWidthPx;
             newHeight = (int) (newWidth * ratio);
         } else {
-            newWidth = mResourceVars.videoWidthPx;
-            newHeight = mResourceVars.videoHeightPx;
+            newWidth = mResourceVars.mVideoWidthPx;
+            newHeight = mResourceVars.mVideoHeightPx;
         }
 
-        String newTag = new StringBuilder("<iframe src='").append(src).append("'")
-                .append(" frameborder='0' allowfullscreen='true' allowtransparency='true'")
-                .append(" width='").append(pxToDp(newWidth)).append("'")
-                .append(" height='").append(pxToDp(newHeight)).append("' />")
-                .toString();
+        String newTag = "<iframe src='" + src + "'"
+                        + " frameborder='0' allowfullscreen='true' allowtransparency='true'"
+                        + " width='" + pxToDp(newWidth) + "'"
+                        + " height='" + pxToDp(newHeight) + "' />";
 
         int start = mRenderBuilder.indexOf(tag);
         if (start == -1) {
@@ -290,90 +346,202 @@ class ReaderPostRenderer {
     /*
      * returns the full content, including CSS, that will be shown in the WebView for this post
      */
-    private String formatPostContentForWebView(final String content) {
+    private String formatPostContentForWebView(final String content, final Set<String> jsToInject,
+                                               boolean hasTiledGallery, boolean isWideDisplay) {
+        final boolean renderAsTiledGallery = hasTiledGallery && isWideDisplay;
+
+        // unique CSS class assigned to the gallery elements for easy selection
+        final String galleryOnlyClass = "gallery-only-class" + new Random().nextInt(1000);
+
+        @SuppressWarnings("StringBufferReplaceableByString")
         StringBuilder sbHtml = new StringBuilder("<!DOCTYPE html><html><head><meta charset='UTF-8' />");
 
         // title isn't necessary, but it's invalid html5 without one
         sbHtml.append("<title>Reader Post</title>")
+              // https://developers.google.com/chrome/mobile/docs/webview/pixelperfect
+              .append("<meta name='viewport' content='width=device-width, initial-scale=1'>")
+              .append("<style type='text/css'>")
+              .append(" body { font-family: 'Noto Serif', serif; font-weight: 400; margin: 0px; padding: 0px;}")
+              .append(" body, p, div { max-width: 100% !important; word-wrap: break-word; }")
+              // set line-height, font-size but not for .tiled-gallery divs when rendering as tiled
+              // gallery as those will be handled with the .tiled-gallery rules bellow.
+              .append(" p, div" + (renderAsTiledGallery ? ":not(." + galleryOnlyClass + ")" : "")
+                      + ", li { line-height: 1.6em; font-size: 100%; }")
+              .append(" h1, h2 { line-height: 1.2em; }")
+              // counteract pre-defined height/width styles, expect for the tiled-gallery divs when rendering as
+              // tiled gallery as those will be handled with the .tiled-gallery rules bellow.
+              .append(" p, div" + (renderAsTiledGallery ? ":not(.tiled-gallery.*)" : "")
+                      + ", dl, table { width: auto !important; height: auto !important; }")
+              // make sure long strings don't force the user to scroll horizontally
+              .append(" body, p, div, a { word-wrap: break-word; }")
+              // use a consistent top/bottom margin for paragraphs, with no top margin for the first one
+              .append(" p { margin-top: ").append(mResourceVars.mMarginMediumPx).append("px;")
+              .append(" margin-bottom: ").append(mResourceVars.mMarginMediumPx).append("px; }")
+              .append(" p:first-child { margin-top: 0px; }")
+              // add background color and padding to pre blocks, and add overflow scrolling
+              // so user can scroll the block if it's wider than the display
+              .append(" pre { overflow-x: scroll;")
+              .append(" background-color: ").append(mResourceVars.mGreyExtraLightStr).append("; ")
+              .append(" padding: ").append(mResourceVars.mMarginMediumPx).append("px; }")
+              // add a left border to blockquotes
+              .append(" blockquote { color: ").append(mResourceVars.mGreyMediumDarkStr).append("; ")
+              .append(" padding-left: 32px; ")
+              .append(" margin-left: 0px; ")
+              .append(" border-left: 3px solid ").append(mResourceVars.mGreyExtraLightStr).append("; }")
+              // show links in the same color they are elsewhere in the app
+              .append(" a { text-decoration: none; color: ").append(mResourceVars.mLinkColorStr).append("; }")
+              // make sure images aren't wider than the display, strictly enforced for images without size
+              .append(" img { max-width: 100%; width: auto; height: auto; }")
+              .append(" img.size-none { max-width: 100% !important; height: auto !important; }")
+              // center large/medium images, provide a small bottom margin, and add a background color
+              // so the user sees something while they're loading
+              .append(" img.size-full, img.size-large, img.size-medium {")
+              .append(" display: block; margin-left: auto; margin-right: auto;")
+              .append(" background-color: ").append(mResourceVars.mGreyExtraLightStr).append(";")
+              .append(" margin-bottom: ").append(mResourceVars.mMarginMediumPx).append("px; }");
 
-        // https://developers.google.com/chrome/mobile/docs/webview/pixelperfect
-        .append("<meta name='viewport' content='width=device-width, initial-scale=1'>")
+        if (isWideDisplay) {
+            sbHtml
+                    .append(".alignleft {")
+                    .append(" max-width: 100%;")
+                    .append(" float: left;")
+                    .append(" margin-top: 12px;")
+                    .append(" margin-bottom: 12px;")
+                    .append(" margin-right: 32px;}")
+                    .append(".alignright {")
+                    .append(" max-width: 100%;")
+                    .append(" float: right;")
+                    .append(" margin-top: 12px;")
+                    .append(" margin-bottom: 12px;")
+                    .append(" margin-left: 32px;}");
+        }
 
-        // use "Open Sans" Google font
-        .append("<link rel='stylesheet' type='text/css' href='http://fonts.googleapis.com/css?family=Open+Sans' />")
-
-        .append("<style type='text/css'>")
-        .append("  body { font-family: 'Open Sans', sans-serif; margin: 0px; padding: 0px;}")
-        .append("  body, p, div { max-width: 100% !important; word-wrap: break-word; }")
-        .append("  p, div { line-height: 1.6em; font-size: 1em; }")
-        .append("  h1, h2 { line-height: 1.2em; }")
-
-        // counteract pre-defined height/width styles
-        .append("  p, div, dl, table { width: auto !important; height: auto !important; }")
-
-        // make sure long strings don't force the user to scroll horizontally
-        .append("  body, p, div, a { word-wrap: break-word; }")
-
-        // use a consistent top/bottom margin for paragraphs, with no top margin for the first one
-        .append("  p { margin-top: ").append(mResourceVars.marginSmallPx).append("px;")
-        .append("      margin-bottom: ").append(mResourceVars.marginSmallPx).append("px; }")
-        .append("  p:first-child { margin-top: 0px; }")
-
-        // add background color and padding to pre blocks, and add overflow scrolling
-        // so user can scroll the block if it's wider than the display
-        .append("  pre { overflow-x: scroll;")
-        .append("        background-color: ").append(mResourceVars.greyExtraLightStr).append("; ")
-        .append("        padding: ").append(mResourceVars.marginSmallPx).append("px; }")
-
-        // add a left border to blockquotes
-        .append("  blockquote { margin-left: ").append(mResourceVars.marginSmallPx).append("px; ")
-        .append("               padding-left: ").append(mResourceVars.marginSmallPx).append("px; ")
-        .append("               border-left: 3px solid ").append(mResourceVars.greyLightStr).append("; }")
-
-        // show links in the same color they are elsewhere in the app
-        .append("  a { text-decoration: none; color: ").append(mResourceVars.linkColorStr).append("; }")
-
-        // make sure images aren't wider than the display, strictly enforced for images without size
-        .append("  img { max-width: 100%; }")
-        .append("  img.size-none { max-width: 100% !important; height: auto !important; }")
-
-        // center large/medium images, provide a small bottom margin, and add a background color
-        // so the user sees something while they're loading
-        .append("  img.size-full, img.size-large, img.size-medium {")
-        .append("     display: block; margin-left: auto; margin-right: auto;")
-        .append("     background-color: ").append(mResourceVars.greyExtraLightStr).append(";")
-        .append("     margin-bottom: ").append(mResourceVars.marginSmallPx).append("px; }")
-
-        // set tiled gallery containers to auto height/width
-        .append("  div.gallery-row, div.gallery-group { width: auto !important; height: auto !important; }")
-        .append("  div.tiled-gallery-caption { clear: both; }")
+        if (renderAsTiledGallery) {
+            // tiled-gallery related styles
+            sbHtml
+                    .append(".tiled-gallery {")
+                    .append(" clear:both;")
+                    .append(" overflow:hidden;}")
+                    .append(".tiled-gallery img {")
+                    .append(" margin:2px !important;}")
+                    .append(".tiled-gallery .gallery-group {")
+                    .append(" float:left;")
+                    .append(" position:relative;}")
+                    .append(".tiled-gallery .tiled-gallery-item {")
+                    .append(" float:left;")
+                    .append(" margin:0;")
+                    .append(" position:relative;")
+                    .append(" width:inherit;}")
+                    .append(".tiled-gallery .gallery-row {")
+                    .append(" position: relative;")
+                    .append(" left: 50%;")
+                    .append(" -webkit-transform: translateX(-50%);")
+                    .append(" -moz-transform: translateX(-50%);")
+                    .append(" transform: translateX(-50%);")
+                    .append(" overflow:hidden;}")
+                    .append(".tiled-gallery .tiled-gallery-item a {")
+                    .append(" background:transparent;")
+                    .append(" border:none;")
+                    .append(" color:inherit;")
+                    .append(" margin:0;")
+                    .append(" padding:0;")
+                    .append(" text-decoration:none;")
+                    .append(" width:auto;}")
+                    .append(".tiled-gallery .tiled-gallery-item img,")
+                    .append(".tiled-gallery .tiled-gallery-item img:hover {")
+                    .append(" background:none;")
+                    .append(" border:none;")
+                    .append(" box-shadow:none;")
+                    .append(" max-width:100%;")
+                    .append(" padding:0;")
+                    .append(" vertical-align:middle;}")
+                    .append(".tiled-gallery-caption {")
+                    .append(" background:#eee;")
+                    .append(" background:rgba( 255,255,255,0.8 );")
+                    .append(" color:#333;")
+                    .append(" font-size:13px;")
+                    .append(" font-weight:400;")
+                    .append(" overflow:hidden;")
+                    .append(" padding:10px 0;")
+                    .append(" position:absolute;")
+                    .append(" bottom:0;")
+                    .append(" text-indent:10px;")
+                    .append(" text-overflow:ellipsis;")
+                    .append(" width:100%;")
+                    .append(" white-space:nowrap;}")
+                    .append(".tiled-gallery .tiled-gallery-item-small .tiled-gallery-caption {")
+                    .append(" font-size:11px;}")
+                    .append(".widget-gallery .tiled-gallery-unresized {")
+                    .append(" visibility:hidden;")
+                    .append(" height:0px;")
+                    .append(" overflow:hidden;}")
+                    .append(".tiled-gallery .tiled-gallery-item img.grayscale {")
+                    .append(" position:absolute;")
+                    .append(" left:0;")
+                    .append(" top:0;}")
+                    .append(".tiled-gallery .tiled-gallery-item img.grayscale:hover {")
+                    .append(" opacity:0;}")
+                    .append(".tiled-gallery.type-circle .tiled-gallery-item img {")
+                    .append(" border-radius:50% !important;}")
+                    .append(".tiled-gallery.type-circle .tiled-gallery-caption {")
+                    .append(" display:none;")
+                    .append(" opacity:0;}");
+        }
 
         // see http://codex.wordpress.org/CSS#WordPress_Generated_Classes
-        .append("  .wp-caption { background-color: ").append(mResourceVars.greyExtraLightStr).append("; }")
-        .append("  .wp-caption img { margin-top: 0px; margin-bottom: 0px; }")
-        .append("  .wp-caption .wp-caption-text {")
-        .append("       font-size: smaller; line-height: 1.2em; margin: 0px;")
-        .append("       padding: ").append(mResourceVars.marginExtraSmallPx).append("px; ")
-        .append("       color: ").append(mResourceVars.greyMediumDarkStr).append("; }")
+        sbHtml
+                .append(" .wp-caption img { margin-top: 0px; margin-bottom: 0px; }")
+                .append(" .wp-caption .wp-caption-text {")
+                .append(" font-size: smaller; line-height: 1.2em; margin: 0px;")
+                .append(" text-align: center;")
+                .append(" padding: ").append(mResourceVars.mMarginMediumPx).append("px; ")
+                .append(" color: ").append(mResourceVars.mGreyMediumDarkStr).append("; }")
+                // attribution for Discover posts
+                .append(" div#discover { ")
+                .append(" margin-top: ").append(mResourceVars.mMarginMediumPx).append("px;")
+                .append(" font-family: sans-serif;")
+                .append(" }")
+                // horizontally center iframes
+                .append(" iframe { display: block; margin: 0 auto; }")
+                // make sure html5 videos fit the browser width and use 16:9 ratio (YouTube standard)
+                .append(" video {")
+                .append(" width: ").append(pxToDp(mResourceVars.mVideoWidthPx)).append("px !important;")
+                .append(" height: ").append(pxToDp(mResourceVars.mVideoHeightPx)).append("px !important; }")
+                // hide forms, form-related elements, legacy RSS sharing links and other ad-related content
+                // http://bit.ly/2FUTvsP
+                .append(" form, input, select, button textarea { display: none; }")
+                .append(" div.feedflare { display: none; }")
+                .append(" .sharedaddy, .jp-relatedposts, .mc4wp-form, .wpcnt, ")
+                .append(" .OUTBRAIN, .adsbygoogle { display: none; }")
+                .append("</style>");
 
-        // horizontally center iframes
-        .append("   iframe { display: block; margin: 0 auto; }")
+        // add a custom CSS class to (any) tiled gallery elements to make them easier selectable for various rules
+        final List<String> classAmendRegexes = Arrays.asList(
+                "(tiled-gallery) ([\\s\"\'])",
+                "(gallery-row) ([\\s\"'])",
+                "(gallery-group) ([\\s\"'])",
+                "(tiled-gallery-item) ([\\s\"'])");
+        String contentCustomised = content;
+        for (String classToAmend : classAmendRegexes) {
+            contentCustomised = contentCustomised.replaceAll(classToAmend, "$1 " + galleryOnlyClass + "$2");
+        }
 
-        // make sure html5 videos fit the browser width and use 16:9 ratio (YouTube standard)
-        .append("  video {")
-        .append("     width: ").append(pxToDp(mResourceVars.videoWidthPx)).append("px !important;")
-        .append("     height: ").append(pxToDp(mResourceVars.videoHeightPx)).append("px !important; }")
+        for (String jsUrl : jsToInject) {
+            sbHtml.append("<script src=\"").append(jsUrl).append("\" type=\"text/javascript\" async></script>");
+        }
 
-        .append("</style>")
-        .append("</head><body>")
-        .append(content)
-        .append("</body></html>");
+        sbHtml.append("</head><body>")
+              .append(contentCustomised)
+              .append("</body></html>");
 
         return sbHtml.toString();
     }
 
     private ImageSize getImageSize(final String imageTag, final String imageUrl) {
         ImageSize size = getImageSizeFromAttachments(imageUrl);
+        if (size == null && imageTag.contains("data-orig-size=")) {
+            size = getImageOriginalSizeFromAttributes(imageTag);
+        }
         if (size == null && imageUrl.contains("?")) {
             size = getImageSizeFromQueryParams(imageUrl);
         }
@@ -385,7 +553,7 @@ class ReaderPostRenderer {
 
     private ImageSize getImageSizeFromAttachments(final String imageUrl) {
         if (mAttachmentSizes == null) {
-            mAttachmentSizes = new ImageSizeMap(mPost.getAttachmentsJson());
+            mAttachmentSizes = new ImageSizeMap(mPost.getText(), mPost.getAttachmentsJson());
         }
         return mAttachmentSizes.getImageSize(imageUrl);
     }
@@ -412,6 +580,12 @@ class ReaderPostRenderer {
         return null;
     }
 
+    private ImageSize getImageOriginalSizeFromAttributes(final String imageTag) {
+        return new ImageSize(
+                ReaderHtmlUtils.getOriginalWidthAttrValue(imageTag),
+                ReaderHtmlUtils.getOriginalHeightAttrValue(imageTag));
+    }
+
     private ImageSize getImageSizeFromAttributes(final String imageTag) {
         return new ImageSize(
                 ReaderHtmlUtils.getWidthAttrValue(imageTag),
@@ -424,15 +598,4 @@ class ReaderPostRenderer {
         }
         return DisplayUtils.pxToDp(WordPress.getContext(), px);
     }
-
-    /*
-     * javascript should only be enabled for WordPress.com blogs (not feeds or Jetpack blogs)
-     */
-    private boolean canEnableJavaScript() {
-        return mPost.isWP() && !mPost.isJetpack;
-    }
-
-
-
-
 }

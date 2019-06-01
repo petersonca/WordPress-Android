@@ -1,147 +1,356 @@
 buildscript {
     repositories {
-        mavenCentral()
-        maven { url 'http://download.crashlytics.com/maven' }
+        jcenter()
+        maven { url 'https://plugins.gradle.org/m2/' }
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:1.0.0'
-        classpath 'com.github.nrudenko:gradle-android-cq-plugin:0.1+'
-        classpath 'com.crashlytics.tools.gradle:crashlytics-gradle:+'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.google.gms:google-services:3.2.0'
+        classpath 'se.bjurr.violations:violation-comments-to-github-gradle-plugin:1.51'
+        classpath 'io.sentry:sentry-android-gradle-plugin:1.7.16'
     }
 }
 
 repositories {
-    mavenCentral()
-    maven { url 'http://wordpress-mobile.github.io/WordPress-Android' }
-    maven { url 'http://download.crashlytics.com/maven' }
+    google()
+    jcenter()
+    maven { url 'https://zendesk.jfrog.io/zendesk/repo' }
+    maven { url "https://giphy.bintray.com/giphy-sdk" }
+    maven { url "https://jitpack.io" }
 }
 
 apply plugin: 'com.android.application'
-apply plugin: 'android-cq'
-apply plugin: 'crashlytics'
+apply plugin: 'kotlin-android'
+apply plugin: 'kotlin-android-extensions'
+apply plugin: 'kotlin-kapt'
+apply plugin: 'se.bjurr.violations.violation-comments-to-github-gradle-plugin'
+
+android.defaultConfig.javaCompileOptions.annotationProcessorOptions.includeCompileClasspath = true
 
 android {
-    packagingOptions {
-        exclude "META-INF/LICENSE.txt"
-        exclude "META-INF/NOTICE.txt"
+    useLibrary 'org.apache.http.legacy'
+    useLibrary 'android.test.runner'
+
+    useLibrary 'android.test.base'
+    useLibrary 'android.test.mock'
+
+    dexOptions {
+        jumboMode = true
+        dexInProcess = true
     }
 
-    compileSdkVersion 21
-    buildToolsVersion "21.1.1"
+    compileSdkVersion 28
+    buildToolsVersion '28.0.3'
 
     defaultConfig {
         applicationId "org.wordpress.android"
-        versionName "3.7-rc-2"
-        versionCode 163
-        minSdkVersion 14
-        targetSdkVersion 21
+        versionName "alpha-171"
+        versionCode 731
+        minSdkVersion 21
+        targetSdkVersion 26
 
-        buildConfigField "String", "APP_PN_KEY", "\"org.wordpress.android.playstore\""
+        multiDexEnabled true
+
+        ndk {
+            abiFilters 'armeabi-v7a', 'x86'
+        }
+
+        vectorDrawables.useSupportLibrary = true
+        testInstrumentationRunner 'org.wordpress.android.WordPressTestRunner'
+
+        buildConfigField "boolean", "OFFER_GUTENBERG", "true"
+        buildConfigField "boolean", "DOMAIN_REGISTRATION_ENABLED", "false"
     }
 
-    productFlavors {
-        vanilla {}
+    // Gutenberg's dependency - react-native-video is using
+    // Java API 1.8 so we need this when building from source
+    if (rootProject.ext.buildGutenbergFromSource) {
+        compileOptions {
+            sourceCompatibility JavaVersion.VERSION_1_8
+            targetCompatibility JavaVersion.VERSION_1_8
+        }
+    }
 
-        zbetagroup {
-            buildConfigField "String", "APP_PN_KEY", "\"org.wordpress.android.beta.build\""
+    flavorDimensions "buildType"
+
+    productFlavors {
+        vanilla { // used for release and beta
+            dimension "buildType"
+        }
+
+        zalpha { // alpha version - enable experimental features
+            applicationId "org.wordpress.android"
+            dimension "buildType"
+            buildConfigField "boolean", "VIDEO_OPTIMIZATION_AVAILABLE", "true"
+        }
+
+        wasabi { // "hot" version, can be installed along release, alpha or beta versions
             applicationId "org.wordpress.android.beta"
+            dimension "buildType"
+            buildConfigField "boolean", "DOMAIN_REGISTRATION_ENABLED", "true"
         }
     }
 
     buildTypes {
         release {
-            // Proguard is only used to fix an issue with some Samsung device
-            // https://github.com/wordpress-mobile/WordPress-Android/issues/2151
+            // Proguard is used to shrink our apk, and reduce the number of methods in our final apk,
+            // but we don't obfuscate the bytecode.
             minifyEnabled true
-            proguardFile 'proguard.cfg'
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard.cfg'
         }
 
         debug {
+            minifyEnabled false
             buildConfigField "String", "APP_PN_KEY", "\"org.wordpress.android.debug.build\""
         }
     }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
+    lintOptions{
+        checkDependencies = true
+        lintConfig file('lint.xml')
+        baseline file("lint-baseline.xml")
+    }
+
+    packagingOptions {
+        // MPAndroidChart uses androidX - remove this line when we migrate everything to androidX
+        exclude 'META-INF/proguard/androidx-annotations.pro'
+    }
+}
+
+// allows us to use cool things like @Parcelize annotations
+androidExtensions {
+    experimental = true
 }
 
 dependencies {
-    compile 'com.crashlytics.android:crashlytics:+'
+
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
 
     // Provided by maven central
-    compile 'com.google.code.gson:gson:2.2.2'
-    compile 'org.ccil.cowan.tagsoup:tagsoup:1.2.1'
-    compile 'com.android.support:support-v13:21.0.+'
-    compile 'com.android.support:appcompat-v7:21.0.+'
-    compile 'com.android.support:cardview-v7:21.0.+'
-    compile 'com.android.support:recyclerview-v7:21.0.+'
-    compile 'com.github.chrisbanes.photoview:library:1.2.3'
-    compile 'com.helpshift:android-aar:3.5.0'
-    compile 'commons-lang:commons-lang:2.6'
-    compile 'com.cocosw:undobar:1.6@aar'
+    implementation 'com.google.code.gson:gson:2.6.2'
+    implementation 'org.ccil.cowan.tagsoup:tagsoup:1.2.1'
 
-    compile 'com.mixpanel.android:mixpanel-android:4.3.0@aar'
-    compile 'com.mcxiaoke.volley:library:1.0.+'
+    implementation 'com.android.support:support-compat:28.0.0'
+    implementation 'com.android.support:support-core-ui:28.0.0'
+    implementation 'com.android.support:support-fragment:28.0.0'
 
-    androidTestCompile 'com.google.dexmaker:dexmaker-mockito:1.0'
-    androidTestCompile 'org.objenesis:objenesis:2.1'
-    androidTestCompile 'org.mockito:mockito-core:+'
+    implementation 'com.android.support:multidex:1.0.2'
+    implementation 'com.android.support:support-v4:28.0.0'
+    implementation 'com.android.support:exifinterface:28.0.0'
+    implementation 'com.android.support:support-media-compat:28.0.0'
+    implementation 'com.android.support:appcompat-v7:28.0.0'
+    implementation 'com.android.support:cardview-v7:28.0.0'
+    implementation 'com.android.support:recyclerview-v7:28.0.0'
+    implementation 'com.android.support:design:28.0.0'
+    implementation 'com.android.support:percent:28.0.0'
+    implementation 'com.android.support:preference-v7:28.0.0'
+    implementation "android.arch.work:work-runtime:$arch_work_version"
+    implementation "android.arch.work:work-runtime-ktx:$arch_work_version"
 
-    // Provided by the WordPress-Android Repository
-    compile 'org.wordpress:gcm:1.0.0' // not found in maven central
-    compile 'org.wordpress:drag-sort-listview:0.6.1' // not found in maven central
-    compile 'org.wordpress:slidinguppanel:1.0.0' // not found in maven central
-    compile 'org.wordpress:android-passcodelock:0.0.6'
-    compile 'org.wordpress:emailchecker:0.3'
+    implementation 'com.android.support.constraint:constraint-layout:1.1.2'
 
-    // Simperium
-    compile 'com.simperium.android:simperium:0.6.2'
+    // ViewModel and LiveData
+    implementation "android.arch.lifecycle:extensions:$arch_components_version"
 
-    releaseCompile project(path:':libs:utils:WordPressUtils', configuration: 'release')
-    debugCompile project(path:':libs:utils:WordPressUtils', configuration: 'debug')
-    releaseCompile project(path:':libs:networking:WordPressNetworking', configuration: 'release')
-    debugCompile project(path:':libs:networking:WordPressNetworking', configuration: 'debug')
-    releaseCompile project(path:':libs:wpcomrest:WordPressComRest', configuration: 'release')
-    debugCompile project(path:':libs:wpcomrest:WordPressComRest', configuration: 'debug')
-    releaseCompile project(path:':libs:graphview:WordPressGraphView', configuration: 'release')
-    debugCompile project(path:':libs:graphview:WordPressGraphView', configuration: 'debug')
-    releaseCompile project(path:':libs:persistentedittext:PersistentEditText', configuration: 'release')
-    debugCompile project(path:':libs:persistentedittext:PersistentEditText', configuration: 'debug')
-}
+    testImplementation("android.arch.core:core-testing:$arch_components_version", {
+        exclude group: 'com.android.support', module: 'support-compat'
+        exclude group: 'com.android.support', module: 'support-annotations'
+        exclude group: 'com.android.support', module: 'support-core-utils'
+    })
 
+    implementation 'com.google.firebase:firebase-messaging:17.0.0'
+    implementation 'com.google.android.gms:play-services-auth:15.0.1'
+    implementation 'com.google.android.gms:play-services-places:15.0.1'
+    implementation 'com.android.installreferrer:installreferrer:1.0'
+    implementation 'com.github.chrisbanes.photoview:library:1.2.4'
+    implementation 'org.greenrobot:eventbus:3.1.1'
+    implementation 'com.automattic:rest:1.0.7'
+    implementation 'org.wordpress:graphview:3.4.0'
+    implementation 'org.wordpress:persistentedittext:1.0.2'
+    implementation 'org.wordpress:emailchecker2:1.1.0'
+    implementation 'com.squareup.okio:okio:1.14.0'
+    implementation 'org.apache.commons:commons-text:1.1'
+    implementation 'com.airbnb.android:lottie:2.0.0-rc2'
+    implementation 'com.facebook.shimmer:shimmer:0.4.0'
 
-task generateCrashlyticsConfig(group: "generate", description: "Generate Crashlytics config") {
-    def outputFile = new File("${rootDir}/WordPress/crashlytics.properties")
-    def inputFile = file("${rootDir}/WordPress/gradle.properties")
-    if (!inputFile.exists()) {
-        throw new StopActionException("Build configuration file:" + inputFile
-                + " doesn't exist, follow README instructions")
+    implementation ('com.yalantis:ucrop:2.2.0') {
+        exclude group: 'com.squareup.okhttp3'
     }
-    outputs.file outputFile
-    inputs.file inputFile
-    doLast {
-        def properties = new Properties()
-        inputFile.withInputStream { stream ->
-            properties.load(stream)
-        }
-        def crashlyticsApiKey = properties.getProperty('crashlytics.apikey', '0')
-        def writer = new FileWriter(outputFile)
-        writer.write("""// auto-generated file from ${rootDir}/gradle.properties do not modify
-apiKey=${crashlyticsApiKey}""")
-        writer.close()
+
+    implementation 'com.github.bumptech.glide:glide:4.9.0'
+    kapt 'com.github.bumptech.glide:compiler:4.9.0'
+    implementation 'com.github.bumptech.glide:volley-integration:4.6.1@aar'
+
+    testImplementation 'junit:junit:4.12'
+    testImplementation 'org.robolectric:robolectric:3.6.1'
+    testImplementation 'org.robolectric:shadows-multidex:3.6.1'
+    testImplementation 'org.mockito:mockito-core:2.23.0'
+    testImplementation 'com.nhaarman.mockitokotlin2:mockito-kotlin:2.1.0'
+    testImplementation 'org.assertj:assertj-core:3.11.1'
+
+    androidTestImplementation 'org.mockito:mockito-android:2.27.0'
+    androidTestImplementation 'com.nhaarman.mockitokotlin2:mockito-kotlin:2.1.0'
+    androidTestImplementation 'com.squareup.okhttp:mockwebserver:2.7.5'
+    androidTestImplementation 'com.squareup.okio:okio:1.14.0'
+    androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2', {
+        exclude group: 'com.android.support', module: 'support-annotations'
     }
+    androidTestImplementation 'com.android.support.test.uiautomator:uiautomator-v18:2.1.3'
+    androidTestImplementation('com.android.support.test.espresso:espresso-contrib:2.0') {
+        exclude group: 'com.android.support', module: 'appcompat'
+        exclude group: 'com.android.support', module: 'support-v4'
+        exclude module: 'recyclerview-v7'
+    }
+    androidTestImplementation('com.github.tomakehurst:wiremock:2.23.2') {
+        exclude group: 'com.fasterxml.jackson.core', module: 'jackson-core'
+        exclude group: 'org.apache.httpcomponents', module: 'httpclient'
+        exclude group: 'org.apache.commons', module: 'commons-lang3'
+        exclude group: 'asm', module: 'asm'
+        exclude group: 'org.json', module: 'json'
+    }
+    androidTestImplementation 'org.apache.httpcomponents:httpclient-android:4.3.5.1'
+
+    androidTestImplementation project(path:':libs:mocks:WordPressMocks')
+
+    androidTestImplementation 'com.android.support.test:runner:1.0.2'
+    androidTestImplementation 'com.android.support.test:rules:1.0.2'
+    androidTestImplementation 'tools.fastlane:screengrab:1.2.0',  {
+        exclude group: 'com.android.support.test.uiautomator', module: 'uiautomator-v18'
+    }
+    androidTestImplementation "android.arch.work:work-testing:$arch_work_version"
+
+    kaptAndroidTest "com.google.dagger:dagger-compiler:$daggerVersion"
+
+    // Dagger
+    implementation "com.google.dagger:dagger:$daggerVersion"
+    kapt "com.google.dagger:dagger-compiler:$daggerVersion"
+    compileOnly 'org.glassfish:javax.annotation:10.0-b28'
+    implementation "com.google.dagger:dagger-android-support:$daggerVersion"
+    kapt "com.google.dagger:dagger-android-processor:$daggerVersion"
+
+    implementation ("com.github.wordpress-mobile.WordPress-FluxC-Android:fluxc:$fluxCVersion") {
+        exclude group: "com.android.volley"
+    }
+
+    implementation ('com.github.indexos.media-for-mobile:android:43a9026f0973a2f0a74fa813132f6a16f7499c3a')
+
+    implementation project(path:':libs:utils:WordPressUtils')
+    implementation project(path:':libs:networking:WordPressNetworking')
+    implementation project(path:':libs:analytics:WordPressAnalytics')
+    implementation project(path:':libs:editor:WordPressEditor')
+    implementation (project(path:':libs:login:WordPressLoginFlow')) {
+        exclude group: "com.github.wordpress-mobile.WordPress-FluxC-Android", module: "fluxc"
+        exclude group: 'com.github.bumptech.glide'
+    }
+
+    implementation (group: 'com.zendesk', name: 'support', version: '2.0.0') {
+        exclude group: 'com.google.dagger'
+    }
+
+    implementation('com.giphy.sdk:core:1.0.2@aar') {
+        transitive = true
+    }
+
+    lintChecks 'org.wordpress:lint:1.0.1'
+
+    // Sentry
+    implementation 'io.sentry:sentry-android:1.7.16'
+    implementation 'org.slf4j:slf4j-nop:1.7.25'
+
+    // Debug
+    debugImplementation 'com.facebook.stetho:stetho:1.5.0'
+    debugImplementation 'com.facebook.stetho:stetho-okhttp3:1.5.0'
+
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlin_coroutines_version"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$kotlin_coroutines_version"
+
+    implementation 'com.github.PhilJay:MPAndroidChart:v3.1.0-alpha'
 }
 
-// Add generateCrashlyticsConfig to all generateBuildConfig tasks (all variants)
-android.applicationVariants.all { variant ->
-    variant.generateBuildConfig.dependsOn(generateCrashlyticsConfig)
+configurations.all {
+    // Exclude packaged wordpress sub projects, force the use of the source project
+    // (eg. use :libs:utils:WordPressUtils instead of 'org.wordpress:utils')
+    exclude group: 'org.wordpress', module: 'utils'
+    exclude group: 'org.wordpress', module: 'analytics'
 }
 
-// Add properties named "wp.xxx" to our BuildConfig
 android.buildTypes.all { buildType ->
-    project.properties.any { property ->
+    // Add properties named "wp.xxx" to our BuildConfig
+    def inputFile = checkGradlePropertiesFile()
+    def properties = loadPropertiesFromFile(inputFile)
+    properties.any { property ->
         if (property.key.toLowerCase().startsWith("wp.")) {
             buildType.buildConfigField "String", property.key.replace("wp.", "").replace(".", "_").toUpperCase(),
                     "\"${property.value}\""
         }
+        if (property.key.toLowerCase().startsWith("wp.res.")) {
+            buildType.resValue "string", property.key.replace("wp.res.", "").replace(".", "_").toLowerCase(),
+                    "${property.value}"
+        }
     }
+
+    // If Google services file doesn't exist...
+    if (!file("google-services.json").exists()) {
+        // ... copy example file.
+        copy {
+            from(".")
+            into(".")
+            include("google-services.json-example")
+            rename('google-services.json-example', 'google-services.json')
+        }
+    }
+
+    // Print warning message if example Google services file is used.
+    if ((new File('WordPress/google-services.json').text) == (new File('WordPress/google-services.json-example').text)) {
+        println("WARNING: You're using the example google-services.json file. Google login will fail.")
+    }
+}
+
+task violationCommentsToGitHub(type: se.bjurr.violations.comments.github.plugin.gradle.ViolationCommentsToGitHubTask) {
+   repositoryOwner = "wordpress-mobile";
+   repositoryName = "WordPress-Android"
+   pullRequestId = System.properties['GITHUB_PULLREQUESTID']
+   username = System.properties['GITHUB_USERNAME']
+   password = System.properties['GITHUB_PASSWORD']
+   oAuth2Token = System.properties['GITHUB_OAUTH2TOKEN']
+   gitHubUrl = "https://api.github.com/"
+   createCommentWithAllSingleFileComments = false
+   createSingleFileComments = true
+   commentOnlyChangedContent = true
+   minSeverity = se.bjurr.violations.lib.model.SEVERITY.INFO //ERROR, INFO, WARN
+   commentTemplate = """
+**Reporter**: {{violation.reporter}}{{#violation.rule}}\n
+**Rule**: {{violation.rule}}{{/violation.rule}}
+**Severity**: {{violation.severity}}
+**File**: {{violation.file}} L{{violation.startLine}}{{#violation.source}}
+**Source**: {{violation.source}}{{/violation.source}}
+{{violation.message}}
+"""
+   violations = [
+    ["CHECKSTYLE", ".", ".*/build/.*\\.xml\$", "Checkstyle"]
+   ]
+}
+
+def checkGradlePropertiesFile() {
+    def inputFile = file("${rootDir}/gradle.properties")
+    if (!inputFile.exists()) {
+        throw new StopActionException("Build configuration file gradle.properties doesn't exist, follow README instructions")
+    }
+    return inputFile
+}
+
+static def loadPropertiesFromFile(inputFile) {
+    def properties = new Properties()
+    inputFile.withInputStream { stream ->
+        properties.load(stream)
+    }
+    return properties
 }
 
 // For app signing
@@ -149,7 +358,7 @@ if (["storeFile", "storePassword", "keyAlias", "keyPassword"].count { !project.h
     android {
         signingConfigs {
             release {
-                storeFile = file(project.storeFile)
+                storeFile = file(project.storeFile.replaceFirst("^~", System.getProperty("user.home")))
                 storePassword = project.storePassword
                 keyAlias = project.keyAlias
                 keyPassword = project.keyPassword
@@ -158,3 +367,11 @@ if (["storeFile", "storePassword", "keyAlias", "keyPassword"].count { !project.h
     }
     android.buildTypes.release.signingConfig = android.signingConfigs.release
 }
+
+def legacyGBBundleFile = 'src/main/assets/index.android.bundle'
+assert !(file(legacyGBBundleFile).exists()) : "Error: Legacy Gutenberg JS bundle file detected. Please delete it: " + file(legacyGBBundleFile).getAbsolutePath()
+
+// Keep this at the bottom (https://stackoverflow.com/a/37565535)
+apply plugin: 'com.google.gms.google-services'
+apply plugin: 'io.sentry.android.gradle'
+

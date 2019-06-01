@@ -1,0 +1,2 @@
+Better offline support: If you draft offline, drafts automatically upload to the server when you log in.
+Clearer stats: Navigate to a post’s detailed data by clicking on its title on the Stats screen. The current day’s stats appear in gray to help you remember that they’re not final.

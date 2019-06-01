@@ -1,40 +1,74 @@
 package org.wordpress.android.ui.stats;
 
 import android.app.Activity;
+import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseExpandableListAdapter;
 
+import org.apache.commons.lang3.StringUtils;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 import org.wordpress.android.R;
 import org.wordpress.android.ui.stats.models.AuthorModel;
 import org.wordpress.android.ui.stats.models.AuthorsModel;
 import org.wordpress.android.ui.stats.models.FollowDataModel;
-import org.wordpress.android.ui.stats.models.PostModel;
-import org.wordpress.android.ui.stats.service.StatsService;
+import org.wordpress.android.ui.stats.models.StatsPostModel;
+import org.wordpress.android.ui.stats.service.StatsServiceLogic;
 import org.wordpress.android.util.FormatUtils;
-import org.wordpress.android.util.PhotonUtils;
-import org.wordpress.android.widgets.WPNetworkImageView;
+import org.wordpress.android.util.GravatarUtils;
+import org.wordpress.android.util.image.ImageType;
 
 import java.util.List;
 
 public class StatsAuthorsFragment extends StatsAbstractListFragment {
     public static final String TAG = StatsAuthorsFragment.class.getSimpleName();
-    private OnAuthorsSectionChangeListener mListener;
 
-    // Container Activity must implement this interface
-    public interface OnAuthorsSectionChangeListener {
-        public void onAuthorsVisibilityChange(boolean isEmpty);
+    private AuthorsModel mAuthors;
+
+    @Override
+    protected boolean hasDataAvailable() {
+        return mAuthors != null;
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
-        try {
-            mListener = (OnAuthorsSectionChangeListener) activity;
-        } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString() + " must implement OnAuthorsSectionChangeListener");
+    protected void saveStatsData(Bundle outState) {
+        if (hasDataAvailable()) {
+            outState.putSerializable(ARG_REST_RESPONSE, mAuthors);
         }
+    }
+
+    @Override
+    protected void restoreStatsData(Bundle savedInstanceState) {
+        if (savedInstanceState.containsKey(ARG_REST_RESPONSE)) {
+            mAuthors = (AuthorsModel) savedInstanceState.getSerializable(ARG_REST_RESPONSE);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.AuthorsUpdated event) {
+        if (!shouldUpdateFragmentOnUpdateEvent(event)) {
+            return;
+        }
+
+        mGroupIdToExpandedMap.clear();
+        mAuthors = event.mAuthors;
+
+        updateUI();
+    }
+
+    @SuppressWarnings("unused")
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onEventMainThread(StatsEvents.SectionUpdateError event) {
+        if (!shouldUpdateFragmentOnErrorEvent(event)) {
+            return;
+        }
+
+        mAuthors = null;
+        mGroupIdToExpandedMap.clear();
+        showErrorUI(event.mError);
     }
 
     @Override
@@ -43,36 +77,28 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
             return;
         }
 
-        if (isErrorResponse()) {
-            showErrorUI();
-            return;
-        }
-
-        if (isDataEmpty()) {
+        if (!hasAuthors()) {
             showHideNoResultsUI(true);
-            mListener.onAuthorsVisibilityChange(true); // Hide the authors section if completely empty
             return;
         }
 
-        List<AuthorModel> authors = ((AuthorsModel) mDatamodels[0]).getAuthors();
-        // Do not show the authors section if there is one author only
-        if (authors == null || authors.size() <= 1) {
-            showHideNoResultsUI(true);
-            mListener.onAuthorsVisibilityChange(true);
-            return;
-        }
-
-        BaseExpandableListAdapter adapter = new MyExpandableListAdapter(getActivity(), authors);
-        StatsUIHelper.reloadGroupViews(getActivity(), adapter, mGroupIdToExpandedMap, mList, getMaxNumberOfItemsToShowInList());
+        BaseExpandableListAdapter adapter = new MyExpandableListAdapter(getActivity(), mAuthors.getAuthors());
+        StatsUIHelper.reloadGroupViews(getActivity(), adapter, mGroupIdToExpandedMap, mList,
+                                       getMaxNumberOfItemsToShowInList());
         showHideNoResultsUI(false);
-        mListener.onAuthorsVisibilityChange(false);
     }
+
+    private boolean hasAuthors() {
+        return mAuthors != null
+               && mAuthors.getAuthors() != null
+               && mAuthors.getAuthors().size() > 0;
+    }
+
 
     @Override
     protected boolean isViewAllOptionAvailable() {
-        return (!isDataEmpty(0)
-                && ((AuthorsModel) mDatamodels[0]).getAuthors() != null
-                && ((AuthorsModel) mDatamodels[0]).getAuthors().size() > MAX_NUM_OF_ITEMS_DISPLAYED_IN_LIST);
+        return (hasAuthors()
+                && mAuthors.getAuthors().size() > MAX_NUM_OF_ITEMS_DISPLAYED_IN_LIST);
     }
 
     @Override
@@ -81,9 +107,9 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
     }
 
     @Override
-    protected StatsService.StatsEndpointsEnum[] getSectionsToUpdate() {
-        return new StatsService.StatsEndpointsEnum[]{
-                StatsService.StatsEndpointsEnum.AUTHORS
+    protected StatsServiceLogic.StatsEndpointsEnum[] sectionsToUpdate() {
+        return new StatsServiceLogic.StatsEndpointsEnum[]{
+                StatsServiceLogic.StatsEndpointsEnum.AUTHORS
         };
     }
 
@@ -91,34 +117,37 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
     protected int getEntryLabelResId() {
         return R.string.stats_entry_authors;
     }
+
     @Override
     protected int getTotalsLabelResId() {
         return R.string.stats_totals_views;
     }
+
     @Override
     protected int getEmptyLabelTitleResId() {
-        return R.string.stats_empty_top_authors;
+        return R.string.stats_empty_top_posts_title;
     }
+
     @Override
     protected int getEmptyLabelDescResId() {
         return R.string.stats_empty_top_authors_desc;
     }
 
     private class MyExpandableListAdapter extends BaseExpandableListAdapter {
-        public LayoutInflater inflater;
-        public Activity activity;
-        private List<AuthorModel> authors;
+        public final LayoutInflater inflater;
+        public final Activity activity;
+        private final List<AuthorModel> mAuthors;
 
-        public MyExpandableListAdapter(Activity act, List<AuthorModel> authors) {
+        MyExpandableListAdapter(Activity act, List<AuthorModel> authors) {
             this.activity = act;
-            this.authors = authors;
+            mAuthors = authors;
             this.inflater = act.getLayoutInflater();
         }
 
         @Override
         public Object getChild(int groupPosition, int childPosition) {
-            AuthorModel currentGroup = authors.get(groupPosition);
-            List<PostModel> posts = currentGroup.getPosts();
+            AuthorModel currentGroup = mAuthors.get(groupPosition);
+            List<StatsPostModel> posts = currentGroup.getPosts();
             return posts.get(childPosition);
         }
 
@@ -130,8 +159,7 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
         @Override
         public View getChildView(int groupPosition, final int childPosition,
                                  boolean isLastChild, View convertView, ViewGroup parent) {
-
-            final PostModel children = (PostModel) getChild(groupPosition, childPosition);
+            final StatsPostModel children = (StatsPostModel) getChild(groupPosition, childPosition);
 
             if (convertView == null) {
                 convertView = inflater.inflate(R.layout.stats_list_cell, parent, false);
@@ -154,6 +182,13 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
             // totals
             int total = children.getTotals();
             holder.totalsTextView.setText(FormatUtils.formatDecimal(total));
+            holder.totalsTextView.setContentDescription(
+                    org.wordpress.android.util.StringUtils.getQuantityString(
+                            holder.totalsTextView.getContext(),
+                            R.string.stats_views_zero_desc,
+                            R.string.stats_views_one_desc,
+                            R.string.stats_views_many_desc,
+                            total));
 
             // no icon
             holder.networkImageView.setVisibility(View.GONE);
@@ -163,8 +198,8 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
 
         @Override
         public int getChildrenCount(int groupPosition) {
-            AuthorModel currentGroup = authors.get(groupPosition);
-            List<PostModel> posts = currentGroup.getPosts();
+            AuthorModel currentGroup = mAuthors.get(groupPosition);
+            List<StatsPostModel> posts = currentGroup.getPosts();
             if (posts == null) {
                 return 0;
             } else {
@@ -174,12 +209,12 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
 
         @Override
         public Object getGroup(int groupPosition) {
-            return authors.get(groupPosition);
+            return mAuthors.get(groupPosition);
         }
 
         @Override
         public int getGroupCount() {
-            return authors.size();
+            return mAuthors.size();
         }
 
 
@@ -191,7 +226,6 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
         @Override
         public View getGroupView(int groupPosition, boolean isExpanded,
                                  View convertView, ViewGroup parent) {
-
             if (convertView == null) {
                 convertView = inflater.inflate(R.layout.stats_list_cell, parent, false);
                 convertView.setTag(new StatsViewHolder(convertView));
@@ -202,18 +236,31 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
             AuthorModel group = (AuthorModel) getGroup(groupPosition);
 
             String name = group.getName();
+            if (StringUtils.isBlank(name)) {
+                // Jetpack case: articles published before the activation of Jetpack.
+                name = getString(R.string.stats_unknown_author);
+            }
             int total = group.getViews();
             String icon = group.getAvatar();
             int children = getChildrenCount(groupPosition);
 
-            holder.setEntryText(name, getResources().getColor(R.color.stats_link_text_color));
+            holder.setEntryText(name, getResources().getColor(R.color.link_stats));
 
             // totals
             holder.totalsTextView.setText(FormatUtils.formatDecimal(total));
+            holder.totalsTextView.setContentDescription(
+                    org.wordpress.android.util.StringUtils.getQuantityString(
+                            holder.totalsTextView.getContext(),
+                            R.string.stats_views_zero_desc,
+                            R.string.stats_views_one_desc,
+                            R.string.stats_views_many_desc,
+                            total));
 
             // icon
-            //holder.showNetworkImage(icon);
-            holder.networkImageView.setImageUrl(PhotonUtils.fixAvatar(icon, mResourceVars.headerAvatarSizePx), WPNetworkImageView.ImageType.AVATAR);
+            // holder.showNetworkImage(icon);
+            mImageManager.loadIntoCircle(holder.networkImageView, ImageType.AVATAR_WITH_BACKGROUND,
+                    GravatarUtils.fixGravatarUrl(icon, mResourceVars.mHeaderAvatarSizePx));
+
             holder.networkImageView.setVisibility(View.VISIBLE);
 
             final FollowDataModel followData = group.getFollowData();
@@ -249,7 +296,6 @@ public class StatsAuthorsFragment extends StatsAbstractListFragment {
         public boolean isChildSelectable(int groupPosition, int childPosition) {
             return false;
         }
-
     }
 
     @Override

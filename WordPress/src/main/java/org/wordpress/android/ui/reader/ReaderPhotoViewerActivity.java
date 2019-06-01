@@ -1,45 +1,63 @@
 package org.wordpress.android.ui.reader;
 
-import android.app.Fragment;
-import android.app.FragmentManager;
+import android.content.Context;
 import android.os.Bundle;
-import android.support.v13.app.FragmentStatePagerAdapter;
+import android.os.Handler;
+import android.os.Parcelable;
+import android.support.annotation.NonNull;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentStatePagerAdapter;
 import android.support.v4.view.ViewPager;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v7.app.ActionBar;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.widget.Toolbar;
 import android.text.TextUtils;
+import android.view.MenuItem;
 import android.view.View;
+import android.view.animation.Animation;
 import android.widget.TextView;
 
 import org.wordpress.android.R;
-import org.wordpress.android.ui.reader.ReaderViewPagerTransformer.TransformType;
 import org.wordpress.android.ui.reader.models.ReaderImageList;
 import org.wordpress.android.ui.reader.utils.ReaderImageScanner;
 import org.wordpress.android.ui.reader.views.ReaderPhotoView.PhotoViewListener;
-import org.wordpress.android.ui.reader.views.ReaderViewPager;
+import org.wordpress.android.util.AniUtils;
 import org.wordpress.android.util.AppLog;
-
-import javax.annotation.Nonnull;
+import org.wordpress.android.util.LocaleManager;
+import org.wordpress.android.widgets.WPViewPager;
+import org.wordpress.android.widgets.WPViewPagerTransformer;
+import org.wordpress.android.widgets.WPViewPagerTransformer.TransformType;
 
 /**
  * Full-screen photo viewer - uses a ViewPager to enable scrolling between images in a blog
  * post, but also supports viewing a single image
  */
-public class ReaderPhotoViewerActivity extends ActionBarActivity
-                                       implements PhotoViewListener {
-
+public class ReaderPhotoViewerActivity extends AppCompatActivity
+        implements PhotoViewListener {
     private String mInitialImageUrl;
     private boolean mIsPrivate;
+    private boolean mIsGallery;
     private String mContent;
-    private ReaderViewPager mViewPager;
+    private WPViewPager mViewPager;
+    private PhotoPagerAdapter mAdapter;
     private TextView mTxtTitle;
     private boolean mIsTitleVisible;
+    private Toolbar mToolbar;
+    private static final long FADE_DELAY_MS = 3000;
+    private final Handler mFadeHandler = new Handler();
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(LocaleManager.setLocale(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.reader_activity_photo_viewer);
 
-        mViewPager = (ReaderViewPager) findViewById(R.id.viewpager);
+        mViewPager = (WPViewPager) findViewById(R.id.viewpager);
         mTxtTitle = (TextView) findViewById(R.id.text_title);
 
         // title is hidden until we know we can show it
@@ -48,98 +66,143 @@ public class ReaderPhotoViewerActivity extends ActionBarActivity
         if (savedInstanceState != null) {
             mInitialImageUrl = savedInstanceState.getString(ReaderConstants.ARG_IMAGE_URL);
             mIsPrivate = savedInstanceState.getBoolean(ReaderConstants.ARG_IS_PRIVATE);
+            mIsGallery = savedInstanceState.getBoolean(ReaderConstants.ARG_IS_GALLERY);
             mContent = savedInstanceState.getString(ReaderConstants.ARG_CONTENT);
         } else if (getIntent() != null) {
             mInitialImageUrl = getIntent().getStringExtra(ReaderConstants.ARG_IMAGE_URL);
             mIsPrivate = getIntent().getBooleanExtra(ReaderConstants.ARG_IS_PRIVATE, false);
+            mIsGallery = getIntent().getBooleanExtra(ReaderConstants.ARG_IS_GALLERY, false);
             mContent = getIntent().getStringExtra(ReaderConstants.ARG_CONTENT);
         }
 
-        mViewPager.setPageTransformer(false, new ReaderViewPagerTransformer(TransformType.FLOW));
-        mViewPager.setOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener() {
+        mToolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(mToolbar);
+        ActionBar actionBar = getSupportActionBar();
+        if (actionBar != null) {
+            actionBar.setDisplayShowTitleEnabled(false);
+            actionBar.setDisplayHomeAsUpEnabled(true);
+        }
+
+        mViewPager.setPageTransformer(false, new WPViewPagerTransformer(TransformType.FLOW));
+        mViewPager.addOnPageChangeListener(new ViewPager.SimpleOnPageChangeListener() {
             @Override
             public void onPageSelected(int position) {
                 updateTitle(position);
+                showToolbar();
             }
         });
 
+        mViewPager.setAdapter(getAdapter());
         loadImageList();
+        showToolbar();
     }
 
     private void loadImageList() {
-        // content will be empty unless this was called by ReaderPostDetailFragment to show
-        // a list of images in a post (in which case, it's the content of the post)
+        // content will be empty when viewing a single image, otherwise content is HTML
+        // so parse images from it
+        final ReaderImageList imageList;
         if (TextUtils.isEmpty(mContent)) {
-            final ReaderImageList imageList = new ReaderImageList(mIsPrivate);
-            if (!TextUtils.isEmpty(mInitialImageUrl)) {
-                imageList.add(mInitialImageUrl);
-            }
-            setImageList(imageList, mInitialImageUrl);
+            imageList = new ReaderImageList(mIsPrivate);
         } else {
-            // parse images from content and make sure the list includes the passed url
-            new Thread() {
-                @Override
-                public void run() {
-                    final ReaderImageList imageList = new ReaderImageScanner(mContent, mIsPrivate).getImageList();
-                    if (!TextUtils.isEmpty(mInitialImageUrl) && !imageList.hasImageUrl(mInitialImageUrl)) {
-                        AppLog.w(AppLog.T.READER, "reader photo viewer > initial image not in list");
-                        imageList.addImageUrl(0, mInitialImageUrl);
-                    }
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (!isFinishing()) {
-                                setImageList(imageList, mInitialImageUrl);
-                            }
-                        }
-                    });
-                }
-            }.start();
+            int minImageWidth = mIsGallery ? ReaderConstants.MIN_GALLERY_IMAGE_WIDTH : 0;
+            imageList = new ReaderImageScanner(mContent, mIsPrivate).getImageList(0, minImageWidth);
         }
+
+        // make sure initial image is in the list
+        if (!TextUtils.isEmpty(mInitialImageUrl) && !imageList.hasImageUrl(mInitialImageUrl)) {
+            imageList.addImageUrl(0, mInitialImageUrl);
+        }
+
+        getAdapter().setImageList(imageList, mInitialImageUrl);
     }
 
-    private void setImageList(ReaderImageList imageList, String initialImageUrl) {
-        PhotoPagerAdapter adapter = new PhotoPagerAdapter(getFragmentManager(), imageList);
-        mViewPager.setAdapter(adapter);
+    private void showToolbar() {
+        if (!isFinishing()) {
+            mFadeHandler.removeCallbacks(mFadeOutRunnable);
+            mFadeHandler.postDelayed(mFadeOutRunnable, FADE_DELAY_MS);
+            if (mToolbar.getVisibility() != View.VISIBLE) {
+                AniUtils.startAnimation(mToolbar, R.anim.toolbar_fade_in_and_down, new Animation.AnimationListener() {
+                    @Override
+                    public void onAnimationStart(Animation animation) {
+                        mToolbar.setVisibility(View.VISIBLE);
+                    }
 
-        int position = adapter.indexOfImageUrl(initialImageUrl);
-        if (adapter.isValidPosition(position)) {
-            mViewPager.setCurrentItem(position);
-            if (canShowTitle()) {
-                mTxtTitle.setVisibility(View.VISIBLE);
-                mIsTitleVisible = true;
-                updateTitle(position);
-            } else {
-                mIsTitleVisible = false;
+                    @Override
+                    public void onAnimationEnd(Animation animation) {
+                    }
+
+                    @Override
+                    public void onAnimationRepeat(Animation animation) {
+                    }
+                });
             }
         }
     }
 
-    private PhotoPagerAdapter getPageAdapter() {
-        if (mViewPager == null || mViewPager.getAdapter() == null) {
-            return null;
+    private final Runnable mFadeOutRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!isFinishing() && mToolbar.getVisibility() == View.VISIBLE) {
+                AniUtils.startAnimation(mToolbar, R.anim.toolbar_fade_out_and_up, new Animation.AnimationListener() {
+                    @Override
+                    public void onAnimationStart(Animation animation) {
+                    }
+
+                    @Override
+                    public void onAnimationEnd(Animation animation) {
+                        mToolbar.setVisibility(View.GONE);
+                    }
+
+                    @Override
+                    public void onAnimationRepeat(Animation animation) {
+                    }
+                });
+            }
         }
-        return (PhotoPagerAdapter) mViewPager.getAdapter();
+    };
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            onBackPressed();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override public void finish() {
+        super.finish();
+        overridePendingTransition(R.anim.fade_in, R.anim.fade_out);
+    }
+
+    private PhotoPagerAdapter getAdapter() {
+        if (mAdapter == null) {
+            mAdapter = new PhotoPagerAdapter(getSupportFragmentManager());
+        }
+        return mAdapter;
+    }
+
+    private boolean hasAdapter() {
+        return (mAdapter != null);
     }
 
     @Override
-    public void onSaveInstanceState(@Nonnull Bundle outState) {
-        PhotoPagerAdapter adapter = getPageAdapter();
-        if (adapter != null) {
-            String imageUrl = adapter.getImageUrl(mViewPager.getCurrentItem());
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        if (hasAdapter()) {
+            String imageUrl = getAdapter().getImageUrl(mViewPager.getCurrentItem());
             outState.putString(ReaderConstants.ARG_IMAGE_URL, imageUrl);
         }
 
         outState.putBoolean(ReaderConstants.ARG_IS_PRIVATE, mIsPrivate);
+        outState.putBoolean(ReaderConstants.ARG_IS_GALLERY, mIsGallery);
         outState.putString(ReaderConstants.ARG_CONTENT, mContent);
 
         super.onSaveInstanceState(outState);
     }
 
     private int getImageCount() {
-        PhotoPagerAdapter adapter = getPageAdapter();
-        if (adapter != null) {
-            return adapter.getCount();
+        if (hasAdapter()) {
+            return getAdapter().getCount();
         } else {
             return 0;
         }
@@ -150,7 +213,8 @@ public class ReaderPhotoViewerActivity extends ActionBarActivity
             return;
         }
 
-        final String title = getString(R.string.reader_title_photo_viewer, position + 1, getImageCount());
+        String titlePhotoViewer = getString(R.string.reader_title_photo_viewer);
+        String title = String.format(titlePhotoViewer, position + 1, getImageCount());
         if (title.equals(mTxtTitle.getText())) {
             return;
         }
@@ -172,9 +236,9 @@ public class ReaderPhotoViewerActivity extends ActionBarActivity
 
         mTxtTitle.clearAnimation();
         if (mIsTitleVisible) {
-            ReaderAnim.fadeOut(mTxtTitle, ReaderAnim.Duration.SHORT);
+            AniUtils.fadeOut(mTxtTitle, AniUtils.Duration.SHORT);
         } else {
-            ReaderAnim.fadeIn(mTxtTitle, ReaderAnim.Duration.SHORT);
+            AniUtils.fadeIn(mTxtTitle, AniUtils.Duration.SHORT);
         }
         mIsTitleVisible = !mIsTitleVisible;
     }
@@ -182,17 +246,42 @@ public class ReaderPhotoViewerActivity extends ActionBarActivity
     @Override
     public void onTapPhotoView() {
         toggleTitle();
+        showToolbar();
     }
 
     private class PhotoPagerAdapter extends FragmentStatePagerAdapter {
-        private final ReaderImageList mImageList;
+        private ReaderImageList mImageList;
 
-        PhotoPagerAdapter(FragmentManager fm, ReaderImageList imageList) {
+        PhotoPagerAdapter(FragmentManager fm) {
             super(fm);
-            if (imageList != null) {
-                mImageList = (ReaderImageList) imageList.clone();
-            } else {
-                mImageList = new ReaderImageList(mIsPrivate);
+        }
+
+        void setImageList(ReaderImageList imageList, String initialImageUrl) {
+            mImageList = (ReaderImageList) imageList.clone();
+            notifyDataSetChanged();
+
+            int position = indexOfImageUrl(initialImageUrl);
+            if (isValidPosition(position)) {
+                mViewPager.setCurrentItem(position);
+                if (canShowTitle()) {
+                    mTxtTitle.setVisibility(View.VISIBLE);
+                    mIsTitleVisible = true;
+                    updateTitle(position);
+                } else {
+                    mIsTitleVisible = false;
+                }
+            }
+        }
+
+        @Override
+        public void restoreState(Parcelable state, ClassLoader loader) {
+            // work around "Fragement no longer exists for key" Android bug
+            // by catching the IllegalStateException
+            // https://code.google.com/p/android/issues/detail?id=42601
+            try {
+                super.restoreState(state, loader);
+            } catch (IllegalStateException e) {
+                AppLog.e(AppLog.T.READER, e);
             }
         }
 
@@ -205,15 +294,20 @@ public class ReaderPhotoViewerActivity extends ActionBarActivity
 
         @Override
         public int getCount() {
-            return mImageList.size();
+            return (mImageList != null ? mImageList.size() : 0);
         }
 
         private int indexOfImageUrl(String imageUrl) {
+            if (mImageList == null) {
+                return -1;
+            }
             return mImageList.indexOfImageUrl(imageUrl);
         }
 
         private boolean isValidPosition(int position) {
-            return (position >= 0 && position < getCount());
+            return (mImageList != null
+                    && position >= 0
+                    && position < getCount());
         }
 
         private String getImageUrl(int position) {
